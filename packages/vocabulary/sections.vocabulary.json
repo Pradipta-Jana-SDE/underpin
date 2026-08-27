@@ -1,0 +1,142 @@
+{
+  "$schema": "./vocabulary.schema.json",
+  "version": 1,
+  "note": "The single canonical section vocabulary. Imported by extract, classify, match and render. Adding an archetype requires sign-off from all three layers; CI fails on any tag outside this enum. Cardinality lives in variants, never in the archetype id.",
+  "archetypes": [
+    {
+      "id": "hero",
+      "label": "Hero",
+      "component": "Hero",
+      "variants": {
+        "media": ["image", "video", "none"],
+        "layout": ["full", "split", "minimal"]
+      },
+      "slots": {
+        "required": ["title"],
+        "optional": ["subtitle", "media", "cta", "eyebrow"]
+      },
+      "detect": {
+        "position": "first",
+        "builderTypes": ["elementor:hero", "divi:et_pb_fullwidth_header"],
+        "heuristics": ["h1_in_first_viewport", "large_background_media"]
+      }
+    },
+    {
+      "id": "text_media",
+      "label": "Text + media",
+      "component": "TextMedia",
+      "variants": { "layout": ["img_left", "img_right", "text_only"] },
+      "slots": { "required": ["body"], "optional": ["heading", "image", "cta"] },
+      "detect": {
+        "builderTypes": ["elementor:image-box.default", "divi:et_pb_blurb", "wpbakery:wpb_text_column"],
+        "heuristics": ["two_column_text_image_pair"]
+      }
+    },
+    {
+      "id": "feature_grid",
+      "label": "Feature grid",
+      "component": "FeatureGrid",
+      "variants": { "count": "int", "iconStyle": ["icon", "number", "image", "none"] },
+      "slots": { "required": ["items[].title"], "optional": ["heading", "items[].body", "items[].icon", "items[].href"] },
+      "detect": { "builderTypes": ["elementor:icon-box.default", "divi:et_pb_blurb"], "heuristics": ["ge3_uniform_sibling_cards"] }
+    },
+    {
+      "id": "testimonial",
+      "label": "Testimonial",
+      "component": "Testimonial",
+      "variants": { "display": ["slider", "grid", "single"] },
+      "slots": { "required": ["items[].quote"], "optional": ["heading", "items[].author", "items[].role", "items[].photo", "items[].rating"] },
+      "detect": { "builderTypes": ["elementor:testimonial.default", "divi:et_pb_testimonial"], "heuristics": ["blockquote_with_attribution"] },
+      "carousel": true
+    },
+    {
+      "id": "cta_band",
+      "label": "CTA band",
+      "component": "CTABand",
+      "variants": { "media": ["none", "bg_image"] },
+      "slots": { "required": ["heading", "cta"], "optional": ["subtext"] },
+      "detect": { "builderTypes": ["elementor:call-to-action.default", "divi:et_pb_cta"], "heuristics": ["isolated_single_cta_high_contrast"] }
+    },
+    {
+      "id": "faq",
+      "label": "FAQ",
+      "component": "FAQ",
+      "variants": { "display": ["accordion", "list"] },
+      "slots": { "required": ["items[].q", "items[].a"], "optional": ["heading"] },
+      "detect": { "jsonld": ["FAQPage"], "builderTypes": ["elementor:accordion.default", "divi:et_pb_accordion"], "heuristics": ["repeated_question_answer_pairs"] }
+    },
+    {
+      "id": "pricing_table",
+      "label": "Pricing table",
+      "component": "PricingTable",
+      "variants": { "columns": "int" },
+      "slots": { "required": ["tiers[].name", "tiers[].price"], "optional": ["heading", "tiers[].features", "tiers[].cta", "tiers[].badge"] },
+      "detect": { "builderTypes": ["elementor:price-table.default", "divi:et_pb_pricing_tables"], "heuristics": ["currency_tokens_in_repeated_columns"] }
+    },
+    {
+      "id": "stats_strip",
+      "label": "Stats strip",
+      "component": "StatsStrip",
+      "variants": { "layout": ["row", "grid"] },
+      "slots": { "required": ["items[].value", "items[].label"], "optional": ["heading", "items[].icon"] },
+      "detect": { "builderTypes": ["elementor:counter.default", "divi:et_pb_number_counter"], "heuristics": ["large_numerals_low_text_density"] }
+    },
+    {
+      "id": "logo_wall",
+      "label": "Logo wall",
+      "component": "LogoWall",
+      "variants": { "display": ["static", "marquee"] },
+      "slots": { "required": ["items[].image"], "optional": ["heading", "items[].href", "items[].alt"] },
+      "detect": { "heuristics": ["ge4_uniform_small_images_no_text"] }
+    },
+    {
+      "id": "team_grid",
+      "label": "Team grid",
+      "component": "TeamGrid",
+      "variants": { "count": "int" },
+      "slots": { "required": ["items[].name"], "optional": ["heading", "items[].photo", "items[].role", "items[].bio"] },
+      "detect": { "jsonld": ["Person"], "builderTypes": ["elementor:team-member.default", "divi:et_pb_team_member"], "heuristics": ["repeated_person_cards"] }
+    },
+    {
+      "id": "contact_panel",
+      "label": "Contact panel",
+      "component": "ContactPanel",
+      "variants": { "layout": ["form_map", "form_only", "map_only", "details_only"] },
+      "slots": { "required": [], "optional": ["heading", "form", "map", "address", "phone", "email", "hours"] },
+      "detect": { "jsonld": ["LocalBusiness", "ContactPoint"], "heuristics": ["form_and_nap_cooccurrence", "map_embed_present"] }
+    },
+    {
+      "id": "content_list",
+      "label": "Content list",
+      "component": "ContentList",
+      "variants": { "display": ["grid", "list"] },
+      "slots": { "required": ["items[].title", "items[].href"], "optional": ["heading", "items[].excerpt", "items[].image", "items[].date"] },
+      "detect": { "builderTypes": ["elementor:posts.default", "divi:et_pb_blog"], "heuristics": ["teaser_cards_with_date_and_link"] }
+    },
+    {
+      "id": "product_card_grid",
+      "label": "Product grid",
+      "component": "ProductCardGrid",
+      "variants": { "count": "int", "priceDisplay": ["show", "hide", "enquire"] },
+      "slots": { "required": ["items[].title", "items[].image"], "optional": ["heading", "items[].price", "items[].href", "items[].sku"] },
+      "detect": { "heuristics": ["woocommerce_product_loop"], "requiresCapability": "woocommerce" }
+    },
+    {
+      "id": "form",
+      "label": "Form",
+      "component": "FormSection",
+      "variants": { "layout": ["inline", "panel"] },
+      "slots": { "required": ["fields", "submitLabel"], "optional": ["heading", "intro"] },
+      "detect": { "pluginMarkup": ["wpcf7", "gform_", "wpforms-", "ninja-forms"] }
+    },
+    {
+      "id": "rich_text",
+      "label": "Rich text",
+      "component": "RichText",
+      "variants": {},
+      "slots": { "required": ["body"], "optional": ["heading"] },
+      "detect": { "heuristics": ["fallback_no_other_match"] },
+      "isFallback": true
+    }
+  ]
+}

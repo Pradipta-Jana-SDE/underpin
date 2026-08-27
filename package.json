@@ -1,0 +1,21 @@
+{
+  "name": "underpin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Template-driven WordPress to React migration",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "tsc -b",
+    "test": "node --test packages/importer/test/*.test.js",
+    "underpin": "node packages/importer/bin/underpin.js",
+    "scope": "node packages/importer/bin/underpin.js scope",
+    "discover": "node packages/importer/bin/underpin.js discover"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@underpin/vocabulary",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "src/generated/vocabulary.d.ts",
+  "exports": { ".": "./src/index.js", "./json": "./sections.vocabulary.json" },
+  "scripts": { "build": "node scripts/codegen.js" },
+  "files": ["src", "sections.vocabulary.json"]
+}
