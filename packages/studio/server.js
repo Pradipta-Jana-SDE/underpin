@@ -14,12 +14,13 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, extname, resolve, dirname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zipDirectory } from './zip.js';
 
 import { discover } from '@underpin/importer/src/discover/index.js';
 import { fingerprint } from '@underpin/importer/src/fingerprint/index.js';
 import { optionsFor } from '@underpin/importer/src/scope/options.js';
 import { extractSite, extractionStats } from '@underpin/importer/src/extract/index.js';
-import { classifyAll } from '@underpin/importer/src/classify/index.js';
+import { classifyAll, groupUrlsByType } from '@underpin/importer/src/classify/index.js';
 import { matchAll, rankTemplates, mapToTemplate } from '@underpin/importer/src/match/index.js';
 import { generateSite } from '@underpin/importer/src/generate/index.js';
 import { writeReport } from '@underpin/importer/src/report/index.js';
@@ -215,6 +216,109 @@ async function handleScope(req, res) {
   json(res, 200, { plan: { ...plan, inScopeUrls: [], excludedUrls: excluded.slice(0, 50) } });
 }
 
+/**
+ * The page inventory, grouped by type.
+ *
+ * Classified from URL shape alone — the whole point of choosing pages is to avoid
+ * crawling the ones nobody wants, so nothing is fetched to build this list.
+ */
+async function handlePages(req, res) {
+  const { siteUrl } = await body(req);
+  const out = dirFor(siteUrl);
+  const plan = readJson(join(out, 'migration.plan.json'));
+  if (!plan) return json(res, 400, { error: 'Agree scope first.' });
+
+  const groups = groupUrlsByType(plan.inScopeUrls);
+  json(res, 200, {
+    total: plan.inScopeUrls.length,
+    excluded: plan.pages?.excluded ?? 0,
+    groups,
+    // Everything is selected unless the operator says otherwise; a picker that starts
+    // empty makes the common case (migrate the whole site) the most work.
+    selected: plan.selectedUrls ?? null
+  });
+}
+
+/** Records which pages the operator actually wants. */
+async function handleSelect(req, res) {
+  const { siteUrl, urls } = await body(req);
+  const out = dirFor(siteUrl);
+  const plan = readJson(join(out, 'migration.plan.json'));
+  if (!plan) return json(res, 400, { error: 'Agree scope first.' });
+  if (!Array.isArray(urls) || !urls.length) {
+    return json(res, 400, { error: 'Select at least one page.' });
+  }
+
+  const inScope = new Set(plan.inScopeUrls);
+  const selected = urls.filter((u) => inScope.has(u));
+  plan.selectedUrls = selected;
+  plan.pages = { ...plan.pages, selected: selected.length };
+  writeJson(join(out, 'migration.plan.json'), plan);
+  json(res, 200, { selected: selected.length, of: plan.inScopeUrls.length });
+}
+
+/** Packages the generated site as a downloadable zip. */
+async function handleZip(req, res, url) {
+  const host = url.searchParams.get('site');
+  if (!host) return json(res, 400, { error: 'site required' });
+  const dir = join(SITES, host, 'site');
+  if (!existsSync(dir)) return json(res, 404, { error: 'Nothing generated for that site yet.' });
+
+  // Source, not build artefacts: node_modules and .next are reproducible from
+  // package.json and would multiply the download by two orders of magnitude.
+  //
+  // The workspace packages the site depends on are vendored in and every path rewritten,
+  // because inside the monorepo they resolve via `file:../../../packages/...` and in a
+  // zip that path leads nowhere. Vendoring just the template package is not enough — it
+  // depends on @underpin/schema and @underpin/vocabulary in turn, and npm goes to the
+  // registry for anything it cannot find on disk, which 404s.
+  const WORKSPACE = ['templates', 'schema', 'vocabulary'];
+  const vendorName = (n) => `underpin-${n}`;
+  const vendored = WORKSPACE
+    .map((n) => ({ name: n, dir: resolve(ROOT, 'packages', n) }))
+    .filter((w) => existsSync(w.dir));
+
+  /** Repoints every @underpin/* dependency at its vendored sibling. */
+  const repoint = (text, depth) => {
+    const pkg = JSON.parse(text);
+    for (const field of ['dependencies', 'devDependencies', 'optionalDependencies']) {
+      for (const dep of Object.keys(pkg[field] ?? {})) {
+        const m = /^@underpin\/(.+)$/.exec(dep);
+        if (!m) continue;
+        pkg[field][dep] = depth === 0
+          ? `file:./vendor/${vendorName(m[1])}`
+          : `file:../${vendorName(m[1])}`;
+      }
+    }
+    return JSON.stringify(pkg, null, 2) + '\n';
+  };
+
+  const rewrite = { 'package.json': (t) => repoint(t, 0) };
+  for (const w of vendored) {
+    rewrite[`vendor/${vendorName(w.name)}/package.json`] = (t) => repoint(t, 1);
+  }
+
+  const { buffer, count } = zipDirectory(dir, {
+    // The lockfile is monorepo-specific: it pins the old file: paths and npm trusts it
+    // over the rewritten package.json, so it must not travel.
+    ignore: ['node_modules', '.next', 'out', 'package-lock.json'],
+    extra: vendored.map((w) => ({
+      root: w.dir,
+      prefix: join('vendor', vendorName(w.name)),
+      ignore: ['node_modules']
+    })),
+    rewrite
+  });
+
+  res.writeHead(200, {
+    'content-type': 'application/zip',
+    'content-length': buffer.length,
+    'x-file-count': String(count),
+    'content-disposition': `attachment; filename="${host.replace(/[^a-z0-9.-]/gi, '-')}-nextjs.zip"`
+  });
+  res.end(buffer);
+}
+
 /** Stages 4-6: extract, classify, match. Streams per-page progress. */
 async function handleMigrate(req, res) {
   const { siteUrl, limit } = await body(req);
@@ -227,10 +331,16 @@ async function handleMigrate(req, res) {
   const s = stream(res);
   try {
     s.send({ type: 'stage', stage: 'extract', label: `Extracting ${limit ? `a ${limit}-page sample` : `${plan.inScopeUrls.length} pages`}` });
+    // A selection replaces the sample: the operator has already said which pages matter,
+    // so stratified sampling would be second-guessing them.
+    const planForRun = plan.selectedUrls?.length
+      ? { ...plan, inScopeUrls: plan.selectedUrls }
+      : plan;
+
     const { siteIr, pages, failed } = await extractSite({
-      origin: new URL(siteUrl).origin, plan,
+      origin: new URL(siteUrl).origin, plan: planForRun,
       discovery: { ...d, builder: fp.builder },
-      limit: limit || null,
+      limit: plan.selectedUrls?.length ? null : (limit || null),
       onProgress: (done, total, url) => s.send({ type: 'progress', done, total, url })
     });
     writeJson(join(out, 'site.ir.json'), siteIr);
@@ -377,12 +487,15 @@ const server = createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (path === '/api/inspect') return handleInspect(req, res);
       if (path === '/api/scope') return handleScope(req, res);
+      if (path === '/api/pages') return handlePages(req, res);
+      if (path === '/api/select') return handleSelect(req, res);
       if (path === '/api/migrate') return handleMigrate(req, res);
       if (path === '/api/template') return handleSetTemplate(req, res);
       if (path === '/api/build') return handleBuild(req, res);
       if (path === '/api/verify') return handleVerify(req, res);
     }
 
+    if (path === '/api/zip') return handleZip(req, res, url);
     if (path === '/api/sites') return json(res, 200, await listSites());
     if (path === '/api/reuse') return json(res, 200, reuseMatrix(SITES));
     if (path === '/api/templates') {
@@ -449,9 +562,16 @@ const server = createServer(async (req, res) => {
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('Not found');
   } catch (err) {
-    json(res, 500, { error: String(err?.message ?? err) });
+    // A crash in one handler previously killed the whole studio mid-session. Contain it.
+    console.error(`[studio] ${req.method} ${path} failed:`, err?.message ?? err);
+    if (!res.headersSent) json(res, 500, { error: String(err?.message ?? err) });
+    else res.destroy();
   }
 });
+
+// Last line of defence: an async throw outside a handler should log, not exit.
+process.on('uncaughtException', (err) => console.error('[studio] uncaught:', err?.message ?? err));
+process.on('unhandledRejection', (err) => console.error('[studio] unhandled:', err?.message ?? err));
 
 server.listen(PORT, () => {
   console.log(`\n  Underpin Studio  →  http://localhost:${PORT}\n`);

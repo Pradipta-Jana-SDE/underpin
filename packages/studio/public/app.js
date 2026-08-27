@@ -10,7 +10,8 @@ const svg = (id, size = 16) => `<svg width="${size}" height="${size}" viewBox="0
 const STEPS = [
   { id: 'source',   label: 'Source',    sub: 'Enter a URL' },
   { id: 'findings', label: 'Findings',  sub: 'What we found' },
-  { id: 'scope',    label: 'Scope',     sub: 'What to migrate' },
+  { id: 'scope',    label: 'Scope',     sub: 'Capabilities' },
+  { id: 'pages',    label: 'Pages',     sub: 'Which to migrate' },
   { id: 'review',   label: 'Review',    sub: 'Content & templates' },
   { id: 'build',    label: 'Build',     sub: 'Generate & verify' },
   { id: 'preview',  label: 'Preview',   sub: 'Side by side' }
@@ -19,7 +20,8 @@ const STEPS = [
 const state = {
   siteUrl: null, host: null, limit: 12,
   reached: new Set(['source']),
-  questions: [], review: [], templates: [], verify: null, routes: []
+  questions: [], review: [], templates: [], verify: null, routes: [],
+  groups: [], selected: new Set()
 };
 
 /* ------------------------------------------------------------------ chrome */
@@ -210,24 +212,129 @@ function renderQuestions() {
     </div>`).join('');
 }
 
-async function saveScopeAndMigrate() {
+async function saveScopeAndPick() {
   const decisions = {};
   for (const q of state.questions) {
     const picked = $(`input[name="q-${q.id}"]:checked`);
     if (picked) decisions[q.id] = picked.value;
   }
-  const btn = $('#btnMigrate');
+  const btn = $('#btnToPages');
   btn.disabled = true;
   btn.textContent = 'Working…';
 
   try {
     const r = await (await post('/api/scope', { siteUrl: state.siteUrl, decisions })).json();
     if (r.error) throw new Error(r.error);
+    state.plan = r.plan;
+    const inv = await (await post('/api/pages', { siteUrl: state.siteUrl })).json();
+    if (inv.error) throw new Error(inv.error);
+    state.groups = inv.groups;
+    // Everything on by default: a picker that starts empty makes "migrate the whole
+    // site" — the common case — the most work.
+    state.selected = new Set(inv.selected ?? inv.groups.flatMap((g) => g.pages.map((p) => p.url)));
+    reach('pages');
+    goto('pages');
+    renderPages();
+  } catch (err) {
+    alert(`Could not load the page list: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `Choose pages ${svg('i-arrow', 15)}`;
+  }
+}
+
+/* --------------------------------------------------- step 4 · page picker */
+
+const TYPE_LABEL = {
+  home: 'Home', service: 'Service', service_index: 'Services index', about: 'About',
+  location: 'Location', contact: 'Contact', team: 'Team', pricing: 'Pricing', faq: 'FAQ',
+  testimonials: 'Testimonials', gallery: 'Gallery', case_study: 'Case study',
+  careers: 'Careers', blog_index: 'Blog index', blog_post: 'Blog post',
+  product: 'Product', product_index: 'Product index', legal: 'Legal',
+  archive: 'Archive', landing: 'Landing', generic: 'Other'
+};
+const groupLabel = (t) => TYPE_LABEL[t] ?? (t.startsWith('section') ? t.replace('section', '') : t);
+
+function renderPages() {
+  $('#pageGroups').innerHTML = state.groups.map((g, gi) => {
+    const on = g.pages.filter((p) => state.selected.has(p.url)).length;
+    // Groups that are wholly selected start collapsed — the operator only needs to open
+    // the ones they intend to change.
+    const open = on !== g.pages.length || g.pages.length <= 12;
+    return `<details class="pgroup" ${open ? 'open' : ''} data-g="${gi}">
+      <summary>
+        <span class="gname">${esc(groupLabel(g.type))}</span>
+        <span class="gcount">${g.count} page${g.count === 1 ? '' : 's'}</span>
+        <span class="gbadge" data-gb="${gi}">${on}/${g.count}</span>
+        <span class="gactions">
+          <button type="button" data-gall="${gi}">all</button>
+          <button type="button" data-gnone="${gi}">none</button>
+        </span>
+      </summary>
+      <div class="plist">
+        ${g.pages.map((p) => `
+          <label class="prow" data-path="${esc(p.path.toLowerCase())}">
+            <input type="checkbox" data-url="${esc(p.url)}" ${state.selected.has(p.url) ? 'checked' : ''}>
+            <span class="ppath">${esc(p.path)}</span>
+          </label>`).join('')}
+      </div>
+    </details>`;
+  }).join('');
+
+  $$('#pageGroups input[type=checkbox]').forEach((cb) =>
+    cb.addEventListener('change', () => {
+      cb.checked ? state.selected.add(cb.dataset.url) : state.selected.delete(cb.dataset.url);
+      updatePickCounts();
+    })
+  );
+  $$('[data-gall]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); setGroup(+b.dataset.gall, true); }));
+  $$('[data-gnone]').forEach((b) => b.addEventListener('click', (e) => { e.preventDefault(); setGroup(+b.dataset.gnone, false); }));
+  updatePickCounts();
+}
+
+function setGroup(gi, on) {
+  for (const p of state.groups[gi].pages) on ? state.selected.add(p.url) : state.selected.delete(p.url);
+  $$(`#pageGroups details[data-g="${gi}"] input[type=checkbox]`).forEach((cb) => { cb.checked = on; });
+  updatePickCounts();
+}
+
+function updatePickCounts() {
+  const total = state.groups.reduce((a, g) => a + g.count, 0);
+  $('#pickCount').textContent = `${state.selected.size} of ${total} selected`;
+  state.groups.forEach((g, gi) => {
+    const on = g.pages.filter((p) => state.selected.has(p.url)).length;
+    const badge = $(`[data-gb="${gi}"]`);
+    if (badge) badge.textContent = `${on}/${g.count}`;
+  });
+  $('#btnMigrate').disabled = state.selected.size === 0;
+}
+
+function filterPages(q) {
+  const needle = q.trim().toLowerCase();
+  $$('#pageGroups .prow').forEach((row) => {
+    row.hidden = needle && !row.dataset.path.includes(needle);
+  });
+  $$('#pageGroups .pgroup').forEach((d) => {
+    const any = [...d.querySelectorAll('.prow')].some((r) => !r.hidden);
+    d.hidden = !any;
+    if (needle && any) d.open = true;
+  });
+}
+
+async function confirmSelectionAndMigrate() {
+  const btn = $('#btnMigrate');
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  try {
+    const r = await (await post('/api/select', {
+      siteUrl: state.siteUrl, urls: [...state.selected]
+    })).json();
+    if (r.error) throw new Error(r.error);
     reach('review');
     goto('review');
-    await migrate(r.plan);
+    await migrate(state.plan);
   } catch (err) {
-    alert(`Could not save scope: ${err.message}`);
+    alert(`Could not save the selection: ${err.message}`);
   } finally {
     btn.disabled = false;
     btn.innerHTML = `Extract and match templates ${svg('i-arrow', 15)}`;
@@ -367,6 +474,7 @@ async function build() {
   $('#buildBar').style.width = '10%';
   $('#btnPreview').hidden = true;
   $('#btnReport').hidden = true;
+  $('#btnZip').hidden = true;
 
   const res = await post('/api/build', { siteUrl: state.siteUrl });
   for await (const ev of ndjson(res)) {
@@ -393,6 +501,7 @@ async function build() {
       reach('preview');
       $('#btnPreview').hidden = false;
       $('#btnReport').hidden = false;
+      $('#btnZip').hidden = false;
       buildPreviewList();
     }
   }
@@ -463,7 +572,18 @@ function renderPreview() {
 $('#btnInspect').addEventListener('click', inspect);
 $('#url').addEventListener('keydown', (e) => { if (e.key === 'Enter') inspect(); });
 $('#btnToScope').addEventListener('click', () => goto('scope'));
-$('#btnMigrate').addEventListener('click', saveScopeAndMigrate);
+$('#btnToPages').addEventListener('click', saveScopeAndPick);
+$('#btnMigrate').addEventListener('click', confirmSelectionAndMigrate);
+$('#pickAll').addEventListener('click', () => {
+  state.groups.forEach((_, gi) => setGroup(gi, true));
+});
+$('#pickNone').addEventListener('click', () => {
+  state.groups.forEach((_, gi) => setGroup(gi, false));
+});
+$('#pageFilter').addEventListener('input', (e) => filterPages(e.target.value));
+$('#btnZip').addEventListener('click', () => {
+  window.location.href = `/api/zip?site=${encodeURIComponent(state.host)}`;
+});
 $('#btnBuild').addEventListener('click', build);
 $('#btnPreview').addEventListener('click', () => { goto('preview'); renderPreview(); });
 $('#pvPage').addEventListener('change', renderPreview);

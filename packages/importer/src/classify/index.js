@@ -167,3 +167,94 @@ export async function classifyAll(pages, ctx = {}, llm = null) {
   }
   return out;
 }
+
+/**
+ * Classifies a URL without fetching it.
+ *
+ * The page picker has to group thousands of URLs before anything is extracted — the
+ * whole point of choosing pages is to avoid crawling the ones nobody wants. Path shape
+ * and slug tokens carry most of the signal for that, and being wrong here is cheap: the
+ * operator sees the grouping and corrects it by ticking a box.
+ */
+export function classifyUrlOnly(url, ctx = {}) {
+  let path;
+  try {
+    path = new URL(url).pathname.toLowerCase();
+  } catch {
+    return { type: 'generic', confidence: 0, section: null };
+  }
+
+  const segs = path.split('/').filter(Boolean);
+  const slug = segs[segs.length - 1] ?? '';
+  const first = segs[0] ?? '';
+
+  if (segs.length === 0) return { type: 'home', confidence: 1, section: null, why: 'root path' };
+
+  // Structure beats keywords. A post at /blog/constant-contact-vs-mailchimp/ is a blog
+  // post, not a contact page — but slug-token matching happily calls it one, and on a
+  // 3,000-URL site that scatters the entire blog across every other group. Where the URL
+  // states its section, that is the answer and slug tokens do not get a vote.
+  const SECTION = {
+    blog: 'blog_post', news: 'blog_post', articles: 'blog_post',
+    insights: 'blog_post', resources: 'blog_post', post: 'blog_post',
+    services: 'service', solutions: 'service', treatments: 'service',
+    locations: 'location', branches: 'location', stores: 'location',
+    products: 'product', product: 'product', shop: 'product',
+    portfolio: 'case_study', 'case-studies': 'case_study', work: 'case_study',
+    team: 'team', careers: 'careers', jobs: 'careers'
+  };
+  if (segs.length >= 2 && SECTION[first]) {
+    return { type: SECTION[first], confidence: 0.85, section: `/${first}/`, why: `under /${first}/` };
+  }
+  if (segs.length === 1 && SECTION[first]) {
+    const idx = { service: 'service_index', product: 'product_index', blog_post: 'blog_index' };
+    return { type: idx[SECTION[first]] ?? SECTION[first], confidence: 0.85, section: null, why: `section index /${first}/` };
+  }
+
+  const stub = { path, slug, seo: { title: '', schemaTypes: [] }, sections: [], links: { internal: [] } };
+  const r = stage1(stub, ctx);
+
+  if (/\/\d{4}\/\d{2}\//.test(path)) {
+    return { type: 'blog_post', confidence: 0.6, section: null, why: 'dated permalink' };
+  }
+  // A single-segment path naming itself is trustworthy; anything deeper without a known
+  // section is grouped by its own prefix instead of guessed at.
+  if (r.confidence >= 0.6 && segs.length === 1) return { ...r, section: null };
+  if (segs.length >= 2) {
+    return { type: 'generic', confidence: 0.2, section: `/${first}/`, why: `grouped by /${first}/` };
+  }
+  return r.confidence >= 0.5 ? { ...r, section: null } : { type: 'generic', confidence: r.confidence, section: null, why: 'no strong URL signal' };
+}
+
+/** Groups a URL inventory by page type, ready for the picker. */
+export function groupUrlsByType(urls, ctx = {}) {
+  const groups = new Map();
+  for (const url of urls) {
+    const { type, confidence, section } = classifyUrlOnly(url, ctx);
+    // An unrecognised but repeated URL section is a more honest grouping than calling
+    // three hundred pages "generic" — the operator can see what they are.
+    const key = type === 'generic' && section ? `section${section}` : type;
+    if (!groups.has(key)) groups.set(key, []);
+    let path = url;
+    try { path = new URL(url).pathname; } catch {}
+    groups.get(key).push({ url, path, confidence });
+  }
+
+  // Present the types a migration actually cares about first; the long tail after.
+  const PRIORITY = ['home', 'service_index', 'service', 'about', 'location', 'contact',
+                    'team', 'pricing', 'faq', 'testimonials', 'gallery', 'case_study',
+                    'careers', 'blog_index', 'blog_post', 'product_index', 'product',
+                    'legal', 'archive', 'landing', 'generic'];
+
+  return [...groups.entries()]
+    .map(([type, pages]) => ({
+      type,
+      count: pages.length,
+      pages: pages.sort((a, b) => a.path.localeCompare(b.path))
+    }))
+    .sort((a, b) => {
+      const ai = PRIORITY.indexOf(a.type);
+      const bi = PRIORITY.indexOf(b.type);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    });
+}

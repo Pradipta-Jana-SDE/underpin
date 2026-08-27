@@ -108,14 +108,36 @@
       <div class="actions">
         <button class="btn" data-goto="findings">Back</button>
         <div class="spacer"></div>
+        <button class="btn btn--primary" id="btnToPages">Choose pages <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 4 ─ Pages -->
+    <section class="panel" id="p-pages" hidden>
+      <header>
+        <span class="eyebrow">Step 4</span>
+        <h2>Choose the pages to migrate</h2>
+        <p>Every crawled URL, grouped by what it looks like. Types are inferred from URL shape alone — nothing has been fetched yet, which is the point: unticked pages are never crawled.</p>
+      </header>
+      <div class="pick-bar">
+        <input type="search" id="pageFilter" placeholder="Filter by path…" aria-label="Filter pages">
+        <button class="btn btn--sm" id="pickAll">Select all</button>
+        <button class="btn btn--sm" id="pickNone">Select none</button>
+        <div class="spacer"></div>
+        <span id="pickCount" class="mono"></span>
+      </div>
+      <div id="pageGroups"></div>
+      <div class="actions">
+        <button class="btn" data-goto="scope">Back</button>
+        <div class="spacer"></div>
         <button class="btn btn--primary" id="btnMigrate">Extract and match templates <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
       </div>
     </section>
 
-    <!-- 4 ─ Review -->
+    <!-- 5 ─ Review -->
     <section class="panel" id="p-review" hidden>
       <header>
-        <span class="eyebrow">Step 4</span>
+        <span class="eyebrow">Step 5</span>
         <h2>Review content and templates</h2>
         <p>Every page has a recommended template and a match score. Change any of them — the leftover count updates immediately, so you can see what a swap would cost before committing to it.</p>
       </header>
@@ -153,7 +175,7 @@
     <!-- 5 ─ Build -->
     <section class="panel" id="p-build" hidden>
       <header>
-        <span class="eyebrow">Step 5</span>
+        <span class="eyebrow">Step 6</span>
         <h2>Build and verify</h2>
         <p>Generates the Next.js project, re-hosts every image, then checks the result mechanically. The checks read the built output — they are not assertions in a README.</p>
       </header>
@@ -166,6 +188,7 @@
       <div class="actions">
         <button class="btn" data-goto="review">Back</button>
         <div class="spacer"></div>
+        <button class="btn" id="btnZip" hidden>Download codebase (.zip)</button>
         <button class="btn" id="btnReport" hidden>Open full report</button>
         <button class="btn btn--primary" id="btnPreview" hidden>Preview the migrated site <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
       </div>
@@ -174,7 +197,7 @@
     <!-- 6 ─ Preview -->
     <section class="panel" id="p-preview" hidden>
       <header>
-        <span class="eyebrow">Step 6</span>
+        <span class="eyebrow">Step 7</span>
         <h2>Responsive preview</h2>
         <p>Original and migrated, side by side, at the three breakpoints the component library is built against. This doubles as the responsive check.</p>
       </header>
