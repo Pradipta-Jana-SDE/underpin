@@ -76,7 +76,9 @@ export const PageIR = z.object({
   type: z.string().default('page'),
   locale: z.string().default('en'),
   source: z.object({
-    strategy: z.enum(['rest', 'rest_verified', 'builder_dom', 'render_scrape']),
+    // static_dom = cheerio over fetched HTML (no browser). render_scrape = Playwright,
+    // which is the only path that can produce computed style.
+    strategy: z.enum(['rest', 'rest_verified', 'builder_dom', 'static_dom', 'render_scrape']),
     builder: z.string().nullable().default(null),
     restReachable: z.boolean().default(false),
     fetchedAt: z.string(),
