@@ -10,7 +10,8 @@
     "./sections": "./src/sections/index.jsx",
     "./styles.css": "./src/styles.css",
     "./theme": "./src/theme.js",
-    "./DomTree": "./src/DomTree.jsx"
+    "./DomTree": "./src/DomTree.jsx",
+    "./splice": "./src/splice.js"
   },
   "dependencies": {
     "@underpin/vocabulary": "*",

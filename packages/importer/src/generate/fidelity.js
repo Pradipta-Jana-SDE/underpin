@@ -3,6 +3,7 @@ import { join, dirname, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { captureSite } from '../capture/index.js';
 import { mirrorAssets, rewriteTree } from './assets.js';
+import { componentizePage } from './componentize.js';
 
 const require = createRequire(import.meta.url);
 const templatePkgDir = join(dirname(require.resolve('@underpin/templates/manifests')), '..');
@@ -30,7 +31,7 @@ const contentKey = (path) =>
  * this page LOOK like" and keeps the answer verbatim — the rendered DOM, the site's own
  * stylesheets, and the scripts that drive its animations, all re-hosted locally.
  */
-export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaLimit, onProgress }) {
+export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaLimit, componentize = false, onProgress }) {
   const origin = new URL(siteUrl).origin;
   const targets = urls ?? plan.inScopeUrls;
 
@@ -166,8 +167,23 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
         return match.includes('\\/') ? local.replace(/\//g, '\\/') : local;
       });
 
-    write(join(outDir, 'content', 'pages', `${contentKey(p.path)}.json`), rewriteEscaped(asciiJson(doc)));
-    routes.push({ path: p.path, key: contentKey(p.path) });
+    const key = contentKey(p.path);
+
+    if (componentize) {
+      // Split the page into ordered section components. Structure and content live in
+      // separate JSON files so the text and images are editable without touching markup.
+      const parts = componentizePage(doc);
+      for (const part of parts) {
+        write(join(outDir, 'content', 'sections', key, `${part.id}.tree.json`), rewriteEscaped(asciiJson(part.tree)));
+        write(join(outDir, 'content', 'sections', key, `${part.id}.content.json`), rewriteEscaped(asciiJson(part.content)));
+        write(join(outDir, 'components', 'pages', key, `${part.name}.jsx`), sectionComponent(part, key));
+      }
+      write(join(outDir, 'components', 'pages', key, 'Page.jsx'), pageComponent(parts, key));
+      doc.componentized = parts.map((p2) => ({ id: p2.id, name: p2.name, kind: p2.kind, items: p2.itemCount }));
+    }
+
+    write(join(outDir, 'content', 'pages', `${key}.json`), rewriteEscaped(asciiJson(doc)));
+    routes.push({ path: p.path, key, componentized: componentize });
   }
 
   const redirects = (plan.excludedUrls ?? []).map((e) => ({
@@ -176,7 +192,7 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
   write(join(outDir, 'content', 'routes.json'), JSON.stringify(routes, null, 2));
   write(join(outDir, 'content', 'redirects.json'), JSON.stringify(redirects, null, 2));
 
-  scaffoldFidelityApp(outDir, { siteUrl, routes, origin });
+  scaffoldFidelityApp(outDir, { siteUrl, routes, origin, componentize });
 
   return {
     mode: 'fidelity',
@@ -187,7 +203,57 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
   };
 }
 
-function scaffoldFidelityApp(outDir, { siteUrl, routes, origin }) {
+/**
+ * One section, as a thin wrapper around the renderer that already works.
+ *
+ * Deliberately not generated JSX source. Re-deriving the attribute renaming, boolean
+ * props and style parsing a second time as codegen is where this project would quietly
+ * become a much larger one — and the existing renderer already measures 99.8% visual on
+ * a static page. What the client asked for — small, named, ordered, editable files — is
+ * delivered by the composition in Page.jsx and the content JSON beside each section.
+ */
+function sectionComponent(part, key) {
+  return `'use client';
+import { DomNode } from '@underpin/templates/DomTree';
+import { spliceContent } from '@underpin/templates/splice';
+import tree from '../../../content/sections/${key}/${part.id}.tree.json';
+import content from '../../../content/sections/${key}/${part.id}.content.json';
+
+/**
+ * ${part.name}
+ *
+ * Structure: content/sections/${key}/${part.id}.tree.json  (markup — edit with care)
+ * Content:   content/sections/${key}/${part.id}.content.json  (${part.counts.text} text, ${part.counts.media} media — safe to edit)
+ */
+export default function ${part.name}() {
+  return <DomNode node={spliceContent(tree, content, '${part.id}')} path="${part.id}" />;
+}
+`;
+}
+
+/** The page: an ordered composition of its sections, and nothing else. */
+function pageComponent(parts, key) {
+  const imports = parts.map((p) => `import ${p.name} from './${p.name}.jsx';`).join('\n');
+  const body = parts.map((p) => `      <${p.name} />`).join('\n');
+  return `${imports}
+
+/**
+ * Page: /${key === 'index' ? '' : key.replace(/__/g, '/') + '/'}
+ *
+ * Sections render in source order. Adding, removing or reordering them changes the DOM —
+ * which is fine when you mean it, and the reason the original order is preserved here.
+ */
+export default function Page() {
+  return (
+    <>
+${body}
+    </>
+  );
+}
+`;
+}
+
+function scaffoldFidelityApp(outDir, { siteUrl, routes, origin, componentize = false }) {
   const templatesRef = 'file:' + relative(outDir, templatePkgDir).split('\\').join('/');
   const host = new URL(siteUrl).host;
 
@@ -229,7 +295,7 @@ export default function RootLayout({ children }) {
 }
 `);
 
-  write(join(outDir, 'app', '[[...slug]]', 'page.jsx'), `import FidelityPage from '@underpin/templates/DomTree';
+  write(join(outDir, 'app', '[[...slug]]', 'page.jsx'), `${componentize ? "import { SiteScripts } from '@underpin/templates/DomTree';" : "import FidelityPage, { SiteScripts } from '@underpin/templates/DomTree';"}
 import routes from '../../content/routes.json';
 
 const load = (key) => require(\`../../content/pages/\${key}.json\`);
@@ -265,7 +331,7 @@ export default async function Page({ params }) {
   const route = routeFor(slug);
   if (!route) return null;
   const page = load(route.key);
-
+${componentize ? "  const PageSections = require(`../../components/pages/${route.key}/Page.jsx`).default;\n" : ''}
   return (
     <>
       {/* Runs before the stylesheets so the class is on <body> the moment the cascade
@@ -301,7 +367,11 @@ export default async function Page({ params }) {
         <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: block }} />
       ))}
 
-      <FidelityPage page={page} />
+      {/* Componentised builds compose named per-section files; the single-blob build
+          renders the whole captured tree through one renderer. Both produce the same
+          DOM — that equivalence is the acceptance test. */}
+      ${componentize ? '<PageSections />' : '<FidelityPage page={page} />'}
+      <SiteScripts scripts={page.scripts ?? []} />
     </>
   );
 }

@@ -72,6 +72,17 @@ export function DomNode({ node, path = '0' }) {
   const tag = node.t;
   if (!tag) return null;
 
+  // Synthetic wrapper used to group a run of sibling nodes into one component. It exists
+  // only in the data model — emitting it would add an element the source never had and
+  // shift every :nth-child count after it.
+  if (tag === 'underpin-fragment') {
+    return (node.c ?? []).map((child, i) =>
+      typeof child === 'string'
+        ? child
+        : React.createElement(DomNode, { node: child, path: `${path}.${i}`, key: `${path}.${i}` })
+    );
+  }
+
   const props = toProps(node.a, path);
 
   if (VOID.has(tag)) return React.createElement(tag, props);
@@ -153,6 +164,8 @@ export default function FidelityPage({ page }) {
   const root = page.tree;
   const children = root?.t === 'body' ? (root.c ?? []) : [root];
 
+  // Scripts are rendered by the route, not here — the componentised branch needs them
+  // too, and having both render them would load all 44 twice.
   return (
     <>
       {children.map((child, i) =>
@@ -160,7 +173,6 @@ export default function FidelityPage({ page }) {
           ? child
           : <DomNode node={child} path={`b.${i}`} key={`b.${i}`} />
       )}
-      <SiteScripts scripts={page.scripts ?? []} />
     </>
   );
 }

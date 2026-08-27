@@ -1,3 +1,9 @@
+import { spliceContent } from '@underpin/templates/splice';
+
+// Re-exported so callers have one import site; the implementation lives in the templates
+// package because generated sites import it at runtime too, and two copies would drift.
+export { spliceContent };
+
 /**
  * Mechanical decomposition of a captured page into per-section components.
  *
@@ -85,35 +91,25 @@ const signature = (n) =>
  * already learned the hard way.
  */
 export function splitSections(bodyTree) {
-  // Collect the OUTERMOST section-matching nodes anywhere in the tree, not just among
-  // the body's direct children. Real pages nest their sections inside layout wrappers
-  // and script-injected pin-spacers, so looking one level down finds three "sections",
-  // one of which is the entire page.
-  const found = [];
-  const visit = (node) => {
-    if (!isEl(node)) return;
-    if (matchesSection(node)) {
-      found.push(node);
-      return; // outermost only — do not descend into nested sections
-    }
-    (node.c ?? []).forEach(visit);
-  };
-  visit(bodyTree);
+  // This must be a PARTITION of the body's children, not a selection of the
+  // section-shaped ones. Picking out only the nodes that look like sections silently
+  // drops whatever sits between them, and the whole safety argument — that the rendered
+  // DOM is unchanged — dies with it. Every child is accounted for, in order.
+  const root = unwrapTree(bodyTree);
+  const children = (root.c ?? []).filter((c) => isEl(c) || (typeof c === 'string' && c.trim()));
 
-  // Nothing builder-shaped: fall back to the unwrapped root's own children.
-  let nodes = found;
-  if (nodes.length < 2) {
-    const root = unwrapTree(bodyTree);
-    nodes = (root.c ?? []).filter(isEl).map((c) => unwrapTree(c));
-  }
+  // Render the children themselves, NOT an unwrapped descendant. Unwrapping picks a
+  // deeper node to call "the section", which drops the wrapper element from the output —
+  // a direct violation of "never remove an element that always rendered". unwrapTree is
+  // for finding boundaries to reason about, never for deciding what to render.
+  const nodes = children;
 
-  // Merge runs of structurally identical siblings — a six-logo strip is one section.
-  // Signature alone is not enough: Elementor gives every top-level container the same
-  // classes, so seven unrelated sections look identical by shape. Require comparable
-  // size as well, which is what actually distinguishes a card grid from a page.
+  // Merge runs of structurally similar siblings — a six-logo strip is one section, not
+  // six. Signature alone is not enough: Elementor gives every top-level container the
+  // same classes, so comparable size is required too.
   const size = (n) => textOf(n).trim().length + countTag(n, 'img') * 40;
   const similar = (a, b) => {
-    if (signature(a) !== signature(b)) return false;
+    if (!isEl(a) || !isEl(b) || signature(a) !== signature(b)) return false;
     const [x, y] = [size(a) || 1, size(b) || 1];
     return Math.max(x, y) / Math.min(x, y) <= 3;
   };
@@ -124,18 +120,23 @@ export function splitSections(bodyTree) {
     let j = i + 1;
     while (j < nodes.length && similar(nodes[j], nodes[i])) j++;
     const run = nodes.slice(i, j);
-    merged.push(run.length >= 3 ? { kind: 'run', nodes: run } : { kind: 'single', nodes: [run[0]] });
-    i = run.length >= 3 ? j : i + 1;
+    if (run.length >= 3) {
+      merged.push({ kind: 'run', nodes: run });
+      i = j;
+    } else {
+      merged.push({ kind: 'single', nodes: [nodes[i]] });
+      i += 1;
+    }
   }
 
-  return merged
-    .filter((s) => s.nodes.length && (textOf(s.nodes[0]).trim() || countTag(s.nodes[0], 'img')))
-    .map((s, idx) => ({
-      id: `sec_${String(idx + 1).padStart(2, '0')}`,
-      order: idx + 1,
-      kind: s.kind,
-      nodes: s.nodes
-    }));
+  // Nothing is filtered out. An empty-looking node still occupied a sibling position,
+  // and dropping it shifts every :nth-child count after it.
+  return merged.map((s, idx) => ({
+    id: `sec_${String(idx + 1).padStart(2, '0')}`,
+    order: idx + 1,
+    kind: s.kind,
+    nodes: s.nodes
+  }));
 }
 
 function countTag(node, tag) {
@@ -183,37 +184,6 @@ export function hoistContent(tree, base = 's') {
 
   walk(tree, base);
   return { text, media };
-}
-
-/**
- * Puts hoisted values back. The inverse of hoistContent, and the reason the round-trip
- * test can prove decomposition changed nothing.
- */
-export function spliceContent(tree, content, base = 's') {
-  const { text = {}, media = {} } = content ?? {};
-
-  const walk = (node, path) => {
-    if (!isEl(node)) return node;
-
-    const attrs = MEDIA_ATTRS[node.t];
-    const a = { ...node.a };
-    if (attrs) {
-      for (const name of attrs) {
-        const key = `${path}@${name}`;
-        if (key in media) a[name] = media[key];
-      }
-    }
-
-    const c = (node.c ?? []).map((child, i) => {
-      const childPath = `${path}.${i}`;
-      if (typeof child === 'string') return childPath in text ? text[childPath] : child;
-      return walk(child, childPath);
-    });
-
-    return node.c === undefined ? { ...node, a } : { ...node, a, c };
-  };
-
-  return walk(tree, base);
 }
 
 /**

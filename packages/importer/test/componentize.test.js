@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { splitSections, hoistContent, spliceContent, unwrapTree, nameSection } from '../src/generate/componentize.js';
+import { splitSections, hoistContent, spliceContent, unwrapTree, nameSection, componentizePage } from '../src/generate/componentize.js';
 
 const el = (t, a = {}, ...c) => ({ t, a, c });
 
@@ -81,4 +81,35 @@ test('round-trips a real captured page without changing a single node', { skip: 
       assert.deepEqual(back, node, `section ${s.id} did not survive the round trip`);
     }
   }
+});
+
+test('componentised emission covers the whole captured tree, node for node', { skip: !existsSync(CAPTURE) }, () => {
+  // The real acceptance test. Byte-diffing two *builds* cannot work here: each build
+  // re-captures a live site, and elementor.com renders differently every time (measured:
+  // 1075 vs 1076 nodes, 77 vs 83 body children across two runs). The question that
+  // actually matters is whether decomposition loses anything from the capture it was
+  // given — so compare the emission against its own source tree.
+  const page = JSON.parse(readFileSync(CAPTURE, 'utf8'));
+  const count = (n) => (!n || typeof n === 'string' ? 0 : 1 + (n.c ?? []).reduce((s, c) => s + count(c), 0));
+
+  const parts = componentizePage(page);
+  const emitted = parts.reduce((sum, p) => {
+    const t = p.tree;
+    // A run is wrapped in a synthetic fragment that never reaches the DOM.
+    return sum + (t.t === 'underpin-fragment' ? (t.c ?? []).reduce((s, c) => s + count(c), 0) : count(t));
+  }, 0);
+
+  // +1 for <body> itself, which is the container rather than a section.
+  assert.equal(emitted + 1, count(page.tree), 'componentisation dropped nodes from the capture');
+});
+
+test('every captured body child lands in exactly one section', { skip: !existsSync(CAPTURE) }, () => {
+  const page = JSON.parse(readFileSync(CAPTURE, 'utf8'));
+  const sections = splitSections(page.tree);
+  const flat = sections.flatMap((s) => s.nodes);
+  const original = (page.tree.c ?? []).filter(
+    (c) => (c && typeof c === 'object' && c.t) || (typeof c === 'string' && c.trim())
+  );
+  assert.equal(flat.length, original.length, 'partition is not one-to-one with the body children');
+  assert.deepEqual(flat, original, 'partition reordered or altered the children');
 });

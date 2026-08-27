@@ -42,6 +42,7 @@ Options
   --limit <n>      Sample n pages, stratified across URL shapes
   --media <n>      Cap media/asset downloads
   --mode <m>       template (default) | fidelity
+  --componentize   fidelity only: split each page into per-section components
 
 Modes
   template   Rebuilds each page from a shared React component library. Templates are
@@ -228,6 +229,7 @@ async function stageBuildFidelity(siteUrl, out, mediaLimit, limit) {
 
   const result = await generateFidelitySite({
     outDir: appDir, siteUrl, plan, urls, mediaLimit,
+    componentize: flag('componentize'),
     onProgress: (ev) => {
       if (ev.type === 'stage') { process.stdout.write('\r'.padEnd(60) + '\r'); log.info(ev.label); }
       else if (ev.type === 'progress') process.stdout.write(`\r   rendered ${ev.done}/${ev.total}   `);
@@ -236,7 +238,7 @@ async function stageBuildFidelity(siteUrl, out, mediaLimit, limit) {
   });
   process.stdout.write('\r'.padEnd(60) + '\r');
 
-  log.info(`${result.routes.length} pages captured`);
+  log.info(`${result.routes.length} pages captured${flag('componentize') ? ' · split into section components' : ''}`);
   log.info(`assets: ${result.media.downloaded} mirrored · ${result.media.failed.length} failed`);
   if (result.captureFailures.length) log.warn(`${result.captureFailures.length} page(s) failed to render`);
   writeJson(join(out, 'generate-result.json'), result);
