@@ -1,0 +1,150 @@
+/* Underpin component library.
+   Every value here reads a token emitted from site.config, so re-skinning for a
+   different brand replaces the token block and nothing else. */
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--u-bg);
+  color: var(--u-text);
+  font-family: var(--u-font-body);
+  font-size: 17px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+img, svg, iframe { max-width: 100%; height: auto; display: block; }
+a { color: var(--u-primary); text-underline-offset: 2px; }
+:focus-visible { outline: 3px solid var(--u-accent); outline-offset: 2px; border-radius: 4px; }
+
+h1, h2, h3 { font-family: var(--u-font-heading); line-height: 1.15; text-wrap: balance; margin: 0 0 .5em; }
+.u-h1 { font-size: clamp(2rem, 1.3rem + 3vw, 3.4rem); letter-spacing: -.02em; }
+.u-h2 { font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.2rem); letter-spacing: -.015em; }
+.u-h3 { font-size: 1.12rem; margin-bottom: .35em; }
+.u-lede { font-size: 1.1rem; color: var(--u-muted); margin: 0 0 1.2rem; max-width: 60ch; }
+.u-muted { color: var(--u-muted); margin: 0 0 .6rem; }
+.u-center { text-align: center; }
+.u-eyebrow {
+  font-size: .74rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--u-muted); margin: 0 0 .6rem;
+}
+
+/* ---------------------------------------------------------------- layout */
+.u-section { padding: clamp(2.5rem, 5vw, 5rem) 1.25rem; }
+.u-inner { max-width: var(--u-maxw); margin: 0 auto; }
+.u-inner--wide { max-width: 1360px; }
+.u-inner--full { max-width: none; }
+.u-tone-surface { background: var(--u-surface); }
+.u-tone-primary { background: var(--u-primary); color: var(--u-primary-fg); }
+.u-tone-primary .u-h2, .u-tone-primary .u-lede, .u-tone-primary a { color: var(--u-primary-fg); }
+
+.u-grid {
+  display: grid; gap: 1.25rem; list-style: none; padding: 0; margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+}
+@media (min-width: 900px) {
+  .u-grid { grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
+}
+.u-grid--one { max-width: 720px; margin-inline: auto; }
+.u-grid--rows { grid-template-columns: 1fr; }
+
+/* ---------------------------------------------------------------- controls */
+.u-ctas { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.2rem; }
+.u-btn {
+  display: inline-block; padding: .72rem 1.35rem; border-radius: var(--u-radius);
+  font-weight: 600; font-size: .95rem; text-decoration: none; border: 1px solid transparent;
+  transition: opacity .15s ease, background-color .15s ease;
+}
+.u-btn--primary { background: var(--u-primary); color: var(--u-primary-fg); }
+.u-btn--ghost { border-color: var(--u-border); color: var(--u-text); }
+.u-btn:hover { opacity: .88; }
+.u-btn--on-dark { background: var(--u-primary-fg); color: var(--u-primary); }
+.u-btn--on-dark.u-btn--ghost { background: transparent; color: var(--u-primary-fg); border-color: currentColor; }
+
+/* ---------------------------------------------------------------- sections */
+.u-hero .u-inner { display: grid; gap: 2rem; align-items: center; }
+@media (min-width: 900px) { .u-hero--split .u-inner { grid-template-columns: 1.05fr .95fr; } }
+.u-hero__media img { border-radius: var(--u-radius); width: 100%; }
+
+.u-textmedia .u-inner { display: grid; gap: 2rem; align-items: center; }
+@media (min-width: 900px) {
+  .u-textmedia .u-inner { grid-template-columns: 1fr 1fr; }
+  .u-textmedia--rev .u-textmedia__copy { order: 2; }
+}
+.u-textmedia--solo .u-inner { grid-template-columns: 1fr; max-width: 72ch; }
+.u-textmedia__media img { border-radius: var(--u-radius); width: 100%; }
+
+.u-card {
+  background: var(--u-bg); border: 1px solid var(--u-border);
+  border-radius: var(--u-radius); padding: 1.25rem;
+}
+.u-card__img { border-radius: calc(var(--u-radius) - 4px); margin-bottom: .85rem; width: 100%; }
+
+.u-quote { background: var(--u-bg); border: 1px solid var(--u-border); border-radius: var(--u-radius); padding: 1.4rem; }
+.u-quote blockquote { margin: 0 0 1rem; font-size: 1.02rem; }
+.u-quote__by { display: flex; align-items: center; gap: .6rem; font-size: .9rem; }
+.u-avatar { width: 40px; height: 40px; border-radius: 999px; object-fit: cover; }
+
+.u-ctaband .u-inner { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: center; justify-content: space-between; }
+.u-ctaband .u-h2 { margin-bottom: .2em; }
+
+.u-faq__list { display: grid; gap: .6rem; max-width: 80ch; }
+.u-faq__item { border: 1px solid var(--u-border); border-radius: var(--u-radius); padding: .9rem 1.1rem; background: var(--u-bg); }
+.u-faq__item summary { cursor: pointer; font-weight: 600; font-family: var(--u-font-heading); }
+.u-faq__item[open] summary { margin-bottom: .6rem; }
+
+.u-stats ul { text-align: center; }
+.u-stat__value { display: block; font-family: var(--u-font-heading); font-size: clamp(1.8rem, 1.2rem + 2vw, 2.8rem); font-weight: 700; color: var(--u-primary); font-variant-numeric: tabular-nums; }
+
+.u-logos__row { display: flex; flex-wrap: wrap; gap: 1.5rem 2.5rem; align-items: center; justify-content: center; list-style: none; padding: 0; margin: 0; }
+.u-logos__row img { max-height: 38px; width: auto; opacity: .75; }
+
+.u-price { font-family: var(--u-font-heading); font-size: 1.6rem; font-weight: 700; margin: .2rem 0 .8rem; }
+.u-badge { display: inline-block; font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; background: var(--u-accent); color: var(--u-accent-fg); padding: .2rem .5rem; border-radius: 4px; margin-bottom: .5rem; }
+.u-ticks { list-style: none; padding: 0; margin: 0 0 1rem; }
+.u-ticks li { padding-left: 1.3rem; position: relative; margin-bottom: .35rem; }
+.u-ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--u-primary); }
+
+.u-person__photo { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--u-radius); margin-bottom: .8rem; }
+
+.u-contact__grid { display: grid; gap: 2rem; }
+@media (min-width: 900px) { .u-contact__grid { grid-template-columns: 1fr 1fr; } }
+.u-contact__map iframe { width: 100%; min-height: 320px; border: 0; border-radius: var(--u-radius); }
+.u-address { font-style: normal; }
+
+.u-form { display: grid; gap: .9rem; max-width: 34rem; }
+.u-field { display: grid; gap: .3rem; }
+.u-field label { font-size: .88rem; font-weight: 600; }
+.u-input {
+  width: 100%; padding: .65rem .8rem; font: inherit; font-size: .95rem;
+  border: 1px solid var(--u-border); border-radius: var(--u-radius); background: var(--u-bg); color: var(--u-text);
+}
+.u-form button { justify-self: start; cursor: pointer; }
+.u-form__note { font-size: .82rem; color: var(--u-muted); margin: 0; }
+
+.u-prose { max-width: 72ch; }
+.u-prose p { margin: 0 0 1rem; }
+
+/* ---------------------------------------------------------------- chrome */
+.u-header { border-bottom: 1px solid var(--u-border); background: var(--u-bg); }
+.u-header__inner { max-width: var(--u-maxw); margin: 0 auto; padding: .9rem 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.u-logo img { max-height: 40px; width: auto; }
+.u-logo { font-family: var(--u-font-heading); font-weight: 700; text-decoration: none; color: var(--u-text); }
+.u-nav { display: flex; flex-wrap: wrap; gap: 1.1rem; list-style: none; margin: 0; padding: 0; }
+.u-nav a { text-decoration: none; color: var(--u-text); font-size: .95rem; }
+.u-nav a:hover { color: var(--u-primary); }
+
+.u-footer { border-top: 1px solid var(--u-border); background: var(--u-surface); margin-top: 2rem; }
+.u-footer__inner { max-width: var(--u-maxw); margin: 0 auto; padding: 2.5rem 1.25rem; display: grid; gap: 1.5rem; }
+@media (min-width: 720px) { .u-footer__inner { grid-template-columns: 1.4fr 1fr; } }
+.u-footer small { color: var(--u-muted); }
+
+/* Review-only affordance. Stripped from production builds; see docs. */
+.u-flexzone { border-top: 2px dashed var(--u-border); }
+.u-flexzone::before {
+  content: "Flexible zone — sections the template had no fixed slot for";
+  display: block; max-width: var(--u-maxw); margin: 0 auto; padding: .6rem 1.25rem 0;
+  font-size: .72rem; letter-spacing: .1em; text-transform: uppercase; color: var(--u-muted);
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

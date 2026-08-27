@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as cheerio from 'cheerio';
 import { extractSections } from '../src/extract/sections.js';
-import { extractMedia, originalUrl } from '../src/extract/media.js';
+import { extractMedia, originalUrl, parseSrcset } from '../src/extract/media.js';
 import { extractForms } from '../src/extract/forms.js';
 import { widgetType, detectBuilderFromHtml } from '../src/extract/builder-map.js';
 import { isArchetype } from '@underpin/vocabulary';
@@ -132,4 +132,23 @@ test('elementor widget types map through data-widget_type', () => {
 test('divi widget types map through class tokens', () => {
   const $ = load('<div class="et_pb_module et_pb_testimonial"></div>');
   assert.equal(widgetType('divi', $('.et_pb_module'), $), 'testimonial');
+});
+
+test('srcset parsing survives commas inside the URL', () => {
+  // Cloudflare Image Resizing puts its options in the path: /cdn-cgi/image/f=auto,w=632/
+  // Splitting on every comma shredded these and every download 404'd.
+  const ss =
+    'https://x.test/cdn-cgi/image/f=auto,w=632/wp-content/uploads/a-632x360.webp 632w, ' +
+    'https://x.test/cdn-cgi/image/f=auto,w=1688/wp-content/uploads/a-1688x960.webp 1688w';
+  const parsed = parseSrcset(ss);
+  assert.equal(parsed.length, 2, 'two candidates, not four fragments');
+  assert.ok(parsed.every((c) => c.url.startsWith('https://x.test/cdn-cgi/')), 'URLs must stay intact');
+  assert.equal(parsed[1].width, 1688);
+});
+
+test('CDN resize wrappers unwrap to the full-resolution original', () => {
+  assert.equal(
+    originalUrl('https://x.test/cdn-cgi/image/f=auto,w=632/wp-content/uploads/a-632x360.webp'),
+    'https://x.test/wp-content/uploads/a.webp'
+  );
 });

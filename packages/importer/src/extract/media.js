@@ -17,26 +17,43 @@ export function originalUrl(url) {
   // Jetpack Photon proxies through i0.wp.com and friends; unwrap it.
   const photon = /^https?:\/\/i\d\.wp\.com\/(.+?)(\?.*)?$/.exec(url);
   if (photon) url = 'https://' + photon[1];
+  // Cloudflare Image Resizing: /cdn-cgi/image/<options>/<real path>. Unwrapping gets
+  // the full-resolution original instead of a downscaled derivative.
+  url = url.replace(/\/cdn-cgi\/image\/[^/]+\//, '/');
   return url
     .replace(/-\d{2,5}x\d{2,5}(?=\.[a-z]{3,4}(?:$|\?))/i, '')
     .replace(/-scaled(?=\.[a-z]{3,4}(?:$|\?))/i, '')
     .replace(/\?.*$/, '');
 }
 
-/** Pick the largest candidate from a srcset. */
+/**
+ * Picks the largest candidate from a srcset.
+ *
+ * Splitting on every comma is wrong and silently produces garbage URLs: Cloudflare
+ * Image Resizing encodes its options in the path as `/cdn-cgi/image/f=auto,w=632/...`,
+ * so a naive split shreds the URL and every download 404s. Split only on commas that
+ * actually separate candidates — the ones followed by something that starts a URL.
+ */
+export function parseSrcset(srcset) {
+  if (!srcset) return [];
+  return srcset
+    .split(/,(?=\s*(?:https?:\/\/|\/\/|\/|data:))/)
+    .map((part) => {
+      const trimmed = part.trim();
+      if (!trimmed) return null;
+      const m = /^(\S+)(?:\s+(\d+(?:\.\d+)?)([wx]))?$/.exec(trimmed);
+      if (!m) return { url: trimmed.split(/\s+/)[0], width: 0 };
+      const [, url, n, unit] = m;
+      const width = unit === 'w' ? Number(n) : unit === 'x' ? Number(n) * 1000 : 0;
+      return { url, width };
+    })
+    .filter(Boolean);
+}
+
 function widestFromSrcset(srcset) {
-  if (!srcset) return null;
-  let best = null;
-  let bestW = -1;
-  for (const part of srcset.split(',')) {
-    const [u, d] = part.trim().split(/\s+/);
-    const w = d?.endsWith('w') ? parseInt(d) : d?.endsWith('x') ? parseFloat(d) * 1000 : 0;
-    if (u && w > bestW) {
-      best = u;
-      bestW = w;
-    }
-  }
-  return best;
+  const candidates = parseSrcset(srcset);
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (b.width > a.width ? b : a)).url;
 }
 
 /**
