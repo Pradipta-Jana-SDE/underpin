@@ -40,6 +40,42 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
     onProgress: (done, total, url) => onProgress?.({ type: 'progress', done, total, url })
   });
 
+  // og:image and friends live in <head>, not the DOM tree, so the page-level sweep never
+  // sees them — they would ship pointing at the WordPress origin and fail the
+  // origin-independence check outright.
+  const headImages = [];
+  for (const p of pages) {
+    for (const m of p.head?.meta ?? []) {
+      const isImage =
+        m.property === 'og:image' || m.name === 'twitter:image' || m.name === 'msapplication-TileImage';
+      if (isImage && m.content && /^https?:\/\//.test(m.content)) {
+        headImages.push({ url: m.content.split('#')[0], kind: 'image' });
+      }
+    }
+  }
+  for (const h of headImages) if (!assets.some((a) => a.url === h.url)) assets.push(h);
+
+  // srcset alternates: the browser requests exactly one width and ignores the others, so
+  // the response listener never sees them and they ship pointing at the source origin.
+  const known = new Set(assets.map((a) => a.url));
+  const sweepSrcset = (node, base) => {
+    if (!node || typeof node === 'string') return;
+    for (const key of ['srcset', 'data-srcset', 'data-lazy-srcset', 'imagesrcset']) {
+      const raw = node.a?.[key];
+      if (!raw) continue;
+      for (const part of String(raw).split(/,(?=\s*(?:https?:\/\/|\/\/|\/))/)) {
+        const candidate = part.trim().split(/\s+/)[0];
+        if (!candidate || candidate.startsWith('data:')) continue;
+        try {
+          const abs = new URL(candidate, base).toString().split('#')[0];
+          if (!known.has(abs)) { known.add(abs); assets.push({ url: abs, kind: 'image' }); }
+        } catch { /* malformed candidate */ }
+      }
+    }
+    (node.c ?? []).forEach((c) => sweepSrcset(c, base));
+  };
+  for (const p of pages) sweepSrcset(p.tree, p.url);
+
   onProgress?.({ type: 'stage', label: `Mirroring ${assets.length} assets (CSS, fonts, images, scripts)` });
   const capped = mediaLimit ? assets.slice(0, mediaLimit) : assets;
   const { localByUrl, failures: assetFailures, downloaded } = await mirrorAssets(capped, outDir, {
@@ -53,31 +89,54 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
   for (const p of pages) {
     rewriteTree(p.tree, localByUrl, p.url);
 
-    const styles = [...new Set(p.cssLinks.map((h) => {
-      try { return localByUrl.get(new URL(h, p.url).toString().split('#')[0]) ?? null; } catch { return null; }
-    }).filter(Boolean))];
+    const localFor = (raw) => {
+      try { return localByUrl.get(new URL(raw, p.url).toString().split('#')[0]) ?? null; }
+      catch { return null; }
+    };
 
-    const scripts = p.scripts
-      .map((s) => {
-        try { return { src: localByUrl.get(new URL(s.src, p.url).toString().split('#')[0]) ?? null }; }
-        catch { return null; }
+    const rewriteCss = (css) =>
+      css.replace(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g, (whole, ref) => {
+        const r = ref.trim();
+        if (!r || r.startsWith('data:')) return whole;
+        const local = localFor(r);
+        return local ? `url("${local}")` : whole;
+      });
+
+    // One ordered list preserving the document's original link/style interleaving, so the
+    // cascade resolves the same way it did on the source page.
+    const sheets = (p.sheets ?? [])
+      .map((sh) =>
+        sh.kind === 'link'
+          ? (localFor(sh.href) ? { kind: 'link', href: localFor(sh.href) } : null)
+          : (sh.css?.trim() ? { kind: 'inline', css: rewriteCss(sh.css) } : null)
+      )
+      .filter(Boolean);
+
+    // One ordered list, externals and inlines interleaved exactly as the source document
+    // had them. An external whose file could not be mirrored is dropped rather than left
+    // pointing at the origin.
+    const scripts = (p.scriptsOrdered ?? [])
+      .map((sc) => {
+        if (sc.kind === 'external') {
+          const l = localFor(sc.src);
+          return l ? { kind: 'external', src: l } : null;
+        }
+        const code = sc.code?.trim();
+        return code ? { kind: 'inline', code } : null;
       })
-      .filter((s) => s?.src);
+      .filter(Boolean);
 
-    // Inline <style> blocks carry the per-page rules builders emit; their url()
-    // references need the same treatment the linked stylesheets got.
-    const inlineStyles = p.styleTags
-      .filter((c) => c.trim())
-      .map((css) =>
-        css.replace(/url\(\s*['"]?([^'")]+)['"]?\s*\)/g, (whole, ref) => {
-          const r = ref.trim();
-          if (!r || r.startsWith('data:')) return whole;
-          try {
-            const local = localByUrl.get(new URL(r, p.url).toString().split('#')[0]);
-            return local ? `url("${local}")` : whole;
-          } catch { return whole; }
-        })
-      );
+    const head = {
+      ...p.head,
+      meta: (p.head?.meta ?? []).map((m) =>
+        m.content && /^https?:\/\//.test(m.content) && localFor(m.content)
+          ? { ...m, content: localFor(m.content) }
+          : m
+      )
+    };
+
+    // JSON-LD is data, not markup — it passes through verbatim.
+    const jsonLd = (p.jsonLd ?? []).slice(0, 6);
 
     const doc = {
       path: p.path,
@@ -86,15 +145,28 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, mediaL
       lang: p.lang,
       bodyClass: p.bodyClass,
       htmlClass: p.htmlClass,
-      head: p.head,
-      styles,
-      inlineStyles,
+      head,
+      jsonLd,
+      sheets,
       scripts,
-      inlineScripts: p.inlineScripts,
       tree: p.tree,
       mode: 'fidelity'
     };
-    write(join(outDir, 'content', 'pages', `${contentKey(p.path)}.json`), asciiJson(doc));
+    // Final sweep at the string level. Builders park absolute URLs inside JSON-encoded
+    // attributes (Elementor's data-settings) and inline scripts, where a tree walk over
+    // parsed attributes never reaches them — they survive as \\/-escaped strings. Matching
+    // both forms in one pass is the only rewrite that cannot be defeated by a shape
+    // nobody anticipated. Same lesson as template mode's rewriteUrls, one layer deeper.
+    const rewriteEscaped = (json) =>
+      json.replace(/https?:(?:\\\/\\\/|\/\/)[^"'\s\\)]+/g, (match) => {
+        const plain = match.replace(/\\\//g, '/').split('#')[0];
+        const local = localByUrl.get(plain);
+        if (!local) return match;
+        // Preserve the escaping style the original used.
+        return match.includes('\\/') ? local.replace(/\//g, '\\/') : local;
+      });
+
+    write(join(outDir, 'content', 'pages', `${contentKey(p.path)}.json`), rewriteEscaped(asciiJson(doc)));
     routes.push({ path: p.path, key: contentKey(p.path) });
   }
 
@@ -134,16 +206,24 @@ export default {
   transpilePackages: ['@underpin/templates'],
   // The captured markup is the source site's own; Next's built-in checks have nothing
   // useful to say about it and would only fail the build on someone else's HTML.
-  eslint: { ignoreDuringBuilds: true }
+  eslint: { ignoreDuringBuilds: true },
+  // This subtree is deliberately imperative: the site's own scripts mutate the DOM React
+  // rendered. StrictMode's double-invoke exists to catch effects that are not idempotent
+  // — ours is not, by design, and double-invoking would initialise all 44 scripts twice
+  // in 'next dev'. Off for fidelity apps only; template mode keeps the default.
+  reactStrictMode: false
 };
 `);
 
   write(join(outDir, 'app', 'layout.jsx'), `export const metadata = { title: ${JSON.stringify(host)} };
 
 export default function RootLayout({ children }) {
+  // The captured page sets html/body classes from an inline script at render time.
+  // React never declares those attributes here, so it has nothing to reconcile — the
+  // suppression is belt and braces for the externally-mutated case.
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
@@ -188,22 +268,39 @@ export default async function Page({ params }) {
 
   return (
     <>
-      {/* The source site's own stylesheets, re-hosted. This is what makes the page
-          identical rather than merely similar. */}
-      {page.styles.map((href) => <link key={href} rel="stylesheet" href={href} />)}
-      {page.inlineStyles.map((css, i) => (
-        <style key={i} dangerouslySetInnerHTML={{ __html: css }} />
-      ))}
-      {/* The source site's body class carries real styling weight — Elementor and most
-          themes scope rules to it. It is applied to the REAL body: rendering the captured
-          <body> inside Next's own body is invalid HTML and silently breaks every
-          \`body .foo\` selector on the site. */}
+      {/* Runs before the stylesheets so the class is on <body> the moment the cascade
+          resolves. WordPress themes scope heavily to body classes; without this the page
+          background only paints the inner content and the real body shows through. */}
       <script
         dangerouslySetInnerHTML={{
-          __html: \`document.body.className=\${JSON.stringify(page.bodyClass || '')};\` +
-                  \`document.documentElement.className=\${JSON.stringify(page.htmlClass || '')};\`
+          __html:
+            'document.body.className=' + JSON.stringify(page.bodyClass || '') + ';' +
+            'document.documentElement.className=' + JSON.stringify(page.htmlClass || '') + ';'
         }}
       />
+
+      {/* React 19 only hoists these into <head> when precedence is set; without it all
+          of them stay in <body> and most of the site renders unstyled. A shared
+          precedence keeps render order === original document order, and <style> needs an
+          href as its dedup key. */}
+      {page.sheets.map((sheet, i) =>
+        sheet.kind === 'link' ? (
+          <link key={i} rel="stylesheet" href={sheet.href} precedence="site" />
+        ) : (
+          <style
+            key={i}
+            href={'inline-' + i}
+            precedence="site"
+            dangerouslySetInnerHTML={{ __html: sheet.css }}
+          />
+        )
+      )}
+
+      {/* Structured data is data, not markup — verbatim is correct here. */}
+      {(page.jsonLd ?? []).map((block, i) => (
+        <script key={i} type="application/ld+json" dangerouslySetInnerHTML={{ __html: block }} />
+      ))}
+
       <FidelityPage page={page} />
     </>
   );

@@ -23,17 +23,27 @@ const DROP_SCRIPT = [
   /\/wp-json\//i, /heartbeat/i
 ];
 
+/**
+ * `document.write` after load triggers an implicit `document.open()` and erases the
+ * page. Every script we re-inject runs post-load by construction, so any script using it
+ * is in the blast radius — dropped loudly rather than silently.
+ */
+export const DOC_WRITE = /document\s*\.\s*write(ln)?\s*\(/;
+
 /** Inline snippets that are pure WordPress cruft and carry hostile characters. */
 const DROP_INLINE = [
   /_wpemojiSettings/i,      // unpaired surrogates; breaks strict JSON parsers
   /wp-emoji/i,
-  /admin-ajax\.php/i,
-  /wpAjaxUrl|ajaxurl\s*=/i  // points at an endpoint that will not exist
 ];
 
 /** Nodes that are WordPress chrome, not content. */
 const DROP_SELECTOR = [
   '#wpadminbar', '#query-monitor', '.admin-bar-hidden',
+  // Swiper and Slick inject their own duplicate slides into the live DOM for loop mode.
+  // Capturing those clones as permanent nodes means the re-injected library later runs
+  // against DOM containing its own stale output from a different page load — it
+  // re-duplicates on top of them or miscounts. Let the library regenerate its own.
+  '.swiper-slide-duplicate', '.slick-cloned', '.swiper-notification',
   'link[rel="EditURI"]', 'link[rel="wlwmanifest"]', 'link[rel="pingback"]',
   'meta[name="generator"]', 'script[type="application/ld+json"][data-wp]'
 ];
@@ -76,7 +86,9 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress } 
       const seen = new Set();
       page.on('response', (r) => {
         const t = r.request().resourceType();
-        if (['stylesheet', 'font', 'image', 'script'].includes(t)) seen.add(`${t}|${r.url()}`);
+        // 'media' matters: without it a hero <video src> is never mirrored and keeps
+        // pointing at the WordPress origin, which fails origin-independence outright.
+        if (['stylesheet', 'font', 'image', 'script', 'media'].includes(t)) seen.add(`${t}|${r.url()}`);
       });
 
       try {
@@ -133,13 +145,36 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress } 
               return { t: tag, a: attrs, c: kids };
             };
 
-            const styleTags = [...doc.querySelectorAll('style')].map((s) => s.textContent ?? '');
-            const cssLinks = [...doc.querySelectorAll('link[rel="stylesheet"][href]')].map((l) => l.href);
-            const scripts = [...doc.querySelectorAll('script[src]')].map((s) => ({
-              src: s.src, async: s.async, defer: s.defer, type: s.type || 'text/javascript'
-            }));
-            const inlineScripts = [...doc.querySelectorAll('script:not([src])')]
-              .map((s) => ({ type: s.type || 'text/javascript', code: s.textContent ?? '' }));
+            // One ordered query, not two. Themes interleave <link> and <style> for
+            // cascade reasons; capturing them separately and concatenating silently
+            // flips which rule wins on a specificity tie.
+            const sheets = [...doc.querySelectorAll('style, link[rel="stylesheet"][href]')].map((el, i) =>
+              el.tagName === 'STYLE'
+                ? { kind: 'inline', order: i, css: el.textContent ?? '' }
+                : { kind: 'link', order: i, href: el.href }
+            );
+            // Structured data travels as data, so it is collected before scripts are
+            // stripped from the serialized tree.
+            const jsonLd = [...doc.querySelectorAll('script[type="application/ld+json"]')]
+              .map((s) => s.textContent ?? '')
+              .filter((t) => t.trim());
+
+            // Ordered, interleaved. WordPress prints a plugin's config object in an
+            // inline <script> immediately BEFORE the bundle that reads it — capturing
+            // externals and inlines separately and running all externals first means the
+            // bundle boots with its config undefined. Elementor fails exactly this way.
+            const scripts = [...doc.querySelectorAll('script')]
+              .map((s, i) => {
+                const type = (s.type || 'text/javascript').toLowerCase();
+                // Only executable JS goes through the loader. JSON-LD, templating types
+                // and importmaps are data — appending them as scripts throws.
+                const executable = !type || /javascript|^module$|ecmascript/.test(type);
+                if (!executable) return null;
+                return s.src
+                  ? { kind: 'external', order: i, src: s.src, type }
+                  : { kind: 'inline', order: i, code: s.textContent ?? '', type };
+              })
+              .filter(Boolean);
 
             return {
               lang: doc.documentElement.lang || 'en',
@@ -147,10 +182,9 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress } 
               bodyAttrs: Object.fromEntries([...doc.body.attributes].map((a) => [a.name, a.value])),
               htmlClass: doc.documentElement.className,
               tree: serialize(doc.body),
-              styleTags,
-              cssLinks,
-              scripts,
-              inlineScripts,
+              sheets,
+              jsonLd,
+              scriptsOrdered: scripts,
               title: doc.title,
               head: {
                 meta: [...doc.querySelectorAll('meta')].map((m) =>
@@ -168,9 +202,9 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress } 
           if (kind === 'script' && DROP_SCRIPT.some((re) => re.test(u))) continue;
           addAsset(u, kind);
         }
-        for (const l of captured.cssLinks) addAsset(l, 'stylesheet');
-        for (const sc of captured.scripts) {
-          if (!DROP_SCRIPT.some((re) => re.test(sc.src))) addAsset(sc.src, 'script');
+        for (const sh of captured.sheets) if (sh.kind === 'link') addAsset(sh.href, 'stylesheet');
+        for (const sc of captured.scriptsOrdered) {
+          if (sc.kind === 'external' && !DROP_SCRIPT.some((re) => re.test(sc.src))) addAsset(sc.src, 'script');
         }
 
         const u = new URL(url);
@@ -178,13 +212,29 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress } 
           url,
           path: u.pathname,
           ...captured,
-          scripts: captured.scripts.filter((sc) => !DROP_SCRIPT.some((re) => re.test(sc.src))),
-          inlineScripts: captured.inlineScripts.filter(
-            (s) =>
-              s.code.length < 40000 &&
-              !DROP_SCRIPT.some((re) => re.test(s.code)) &&
-              !DROP_INLINE.some((re) => re.test(s.code))
-          )
+          scriptsOrdered: captured.scriptsOrdered
+            .filter((sc) =>
+              sc.kind === 'external'
+                ? !DROP_SCRIPT.some((re) => re.test(sc.src))
+                : sc.code.length < 60000 &&
+                  !DROP_INLINE.some((re) => re.test(sc.code)) &&
+                  !DOC_WRITE.test(sc.code)
+            )
+            .map((sc) =>
+              sc.kind === 'inline'
+                ? {
+                    ...sc,
+                    // A plugin's config object routinely carries an admin-ajax URL.
+                    // Dropping the whole object because of it leaves the bundle booting
+                    // with its config undefined; neutralising just the endpoint keeps
+                    // everything else — colours, breakpoints, feature flags — intact.
+                    code: sc.code.replace(
+                      /https?:(\\?\/\\?\/)[^"'\s]*?(admin-ajax\.php|wp-json)[^"'\s]*/gi,
+                      'about:blank#wp-endpoint-removed'
+                    )
+                  }
+                : sc
+            )
         });
       } catch (err) {
         failures.push({ url, error: String(err?.message ?? err) });

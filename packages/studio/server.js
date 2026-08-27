@@ -414,10 +414,26 @@ const server = createServer(async (req, res) => {
     if (/^\/(media|assets|_next|favicon)/.test(path)) {
       const ref = req.headers.referer ?? '';
       const m = /\/preview\/([^/]+)/.exec(ref);
-      if (m) {
-        const base = join(SITES, m[1], 'site', 'out');
+
+      const tryHost = async (host) => {
+        const base = join(SITES, host, 'site', 'out');
         const target = normalize(join(base, path));
-        if (target.startsWith(base) && (await serveFile(res, target))) return;
+        return target.startsWith(base) && (await serveFile(res, target));
+      };
+
+      if (m && (await tryHost(m[1]))) return;
+
+      // A font or image referenced from inside a stylesheet sends the STYLESHEET as its
+      // Referer, not the page, so the /preview/<host>/ hint is absent exactly when a
+      // fidelity capture needs it most. Asset filenames are content hashes, so scanning
+      // the exports for the name is unambiguous — two sites sharing a name share the
+      // bytes. This is a preview-server concern only; a deployed site serves from its
+      // own root and never hits this path.
+      if (existsSync(SITES)) {
+        for (const host of await readdir(SITES)) {
+          if (m && host === m[1]) continue;
+          if (await tryHost(host)) return;
+        }
       }
     }
 

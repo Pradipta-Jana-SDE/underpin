@@ -123,10 +123,12 @@ export function verifyBuild({ outDir, siteUrl, routes }) {
   });
 
   // 5. No WordPress runtime endpoints leaked into the output.
-  const wpArtefacts = files.filter((f) => /wp-admin|wp-login|xmlrpc\.php/i.test(readFileSync(f, 'utf8')));
+  // wp-json belongs here too: a surviving REST link in <head> is a live reference to the
+  // old install, and grepping only for wp-admin/wp-login/xmlrpc missed it entirely.
+  const wpArtefacts = files.filter((f) => /wp-admin|wp-login|xmlrpc\.php|\/wp-json\//i.test(readFileSync(f, 'utf8')));
   checks.push({
     id: 'no_wp_runtime',
-    label: 'No wp-admin / wp-login / xmlrpc references',
+    label: 'No wp-admin / wp-login / xmlrpc / wp-json references',
     pass: wpArtefacts.length === 0,
     detail: wpArtefacts.length ? `${wpArtefacts.length} page(s) reference WordPress endpoints` : 'clean'
   });

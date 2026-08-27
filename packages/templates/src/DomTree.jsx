@@ -1,3 +1,8 @@
+'use client';
+// Required. Without it the App Router treats this as a Server Component, useEffect never
+// runs, and SiteScripts silently injects nothing — the page renders correctly but every
+// animation, carousel and lazy image stays dead. Nothing errors; it just does not work.
+
 /**
  * Renders a captured DOM tree as real React elements.
  *
@@ -88,46 +93,55 @@ export function DomNode({ node, path = '0' }) {
  * that call WordPress were dropped at capture, and everything remaining is served from
  * this origin.
  */
-export function SiteScripts({ scripts = [], inline = [] }) {
+export function SiteScripts({ scripts = [] }) {
   React.useEffect(() => {
     let cancelled = false;
     const added = [];
 
-    const loadOne = (spec) =>
+    const runExternal = (src) =>
       new Promise((resolve) => {
         const el = document.createElement('script');
-        el.src = spec.src;
+        el.src = src;
         el.async = false;
         el.onload = resolve;
-        el.onerror = resolve; // a failed animation script must not block the rest
+        // A single failed animation script must not stall the rest of the chain.
+        el.onerror = resolve;
         document.body.appendChild(el);
         added.push(el);
       });
 
+    const runInline = (code) => {
+      try {
+        const el = document.createElement('script');
+        el.textContent = code;
+        document.body.appendChild(el);
+        added.push(el);
+      } catch {
+        /* a snippet that throws should not take the page with it */
+      }
+    };
+
     (async () => {
+      // Strict document order, awaiting each external before continuing. WordPress
+      // prints a plugin's config object in an inline script immediately before the
+      // bundle that reads it — running all externals first and inlines afterwards boots
+      // every bundle with its config undefined.
       for (const s of scripts) {
         if (cancelled) return;
-        await loadOne(s);
+        if (s.kind === 'external') await runExternal(s.src);
+        else runInline(s.code);
       }
       if (cancelled) return;
-      for (const s of inline) {
-        try {
-          const el = document.createElement('script');
-          el.textContent = s.code;
-          document.body.appendChild(el);
-          added.push(el);
-        } catch { /* an inline snippet that throws should not take the page with it */ }
-      }
-      // Plugins commonly initialise on these; the page has already "loaded" by now.
+      // Plugins commonly initialise on these; both have long since fired by now.
+      document.dispatchEvent(new Event('DOMContentLoaded', { bubbles: true }));
       window.dispatchEvent(new Event('load'));
-      document.dispatchEvent(new Event('DOMContentLoaded'));
     })();
 
     return () => {
       cancelled = true;
       for (const el of added) el.remove();
     };
-  }, [scripts, inline]);
+  }, [scripts]);
 
   return null;
 }
@@ -146,7 +160,7 @@ export default function FidelityPage({ page }) {
           ? child
           : <DomNode node={child} path={`b.${i}`} key={`b.${i}`} />
       )}
-      <SiteScripts scripts={page.scripts ?? []} inline={page.inlineScripts ?? []} />
+      <SiteScripts scripts={page.scripts ?? []} />
     </>
   );
 }
