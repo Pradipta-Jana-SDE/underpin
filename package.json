@@ -20,6 +20,8 @@
     "studio": "node packages/studio/server.js"
   },
   "dependencies": {
-    "playwright": "^1.62.1"
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.62.1",
+    "pngjs": "^7.0.0"
   }
 }

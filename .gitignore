@@ -4,8 +4,12 @@ dist/
 .env
 .env.local
 .cache/
-sites/*/node_modules/
-sites/*/.next/
-sites/*/out/
+# Generated sites nest one level deeper than the original rules assumed
+# (sites/<host>/site/.next), so these must be recursive.
+**/node_modules/
+**/.next/
+**/out/
+sites/*/site/public/assets/
+sites/*/site/public/media/
 .underpin/
 .shots/
