@@ -228,6 +228,11 @@ async function stageBuild(siteUrl, out, mediaLimit) {
   else log.ok('no leftover content — every extracted section renders somewhere');
   log.ok(`site → ${pc.bold(appDir.replace(process.cwd() + '/', ''))}`);
   writeJson(join(out, 'generate-result.json'), result);
+
+  // The report describes this build, so it is regenerated with it. Leaving a stale
+  // report on disk next to a fresh export is worse than having none — it reads as
+  // current and quietly reports the previous run's numbers.
+  await writeReport(out, siteUrl);
   return result;
 }
 

@@ -1,0 +1,7 @@
+{
+  "name": "@underpin/studio",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "underpin-studio": "./server.js" },
+  "dependencies": { "@underpin/importer": "*", "@underpin/templates": "*" }
+}

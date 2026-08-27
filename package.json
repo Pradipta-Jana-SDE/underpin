@@ -16,6 +16,10 @@
     "test": "node --test packages/importer/test/*.test.js",
     "underpin": "node packages/importer/bin/underpin.js",
     "scope": "node packages/importer/bin/underpin.js scope",
-    "discover": "node packages/importer/bin/underpin.js discover"
+    "discover": "node packages/importer/bin/underpin.js discover",
+    "studio": "node packages/studio/server.js"
+  },
+  "dependencies": {
+    "playwright": "^1.62.1"
   }
 }

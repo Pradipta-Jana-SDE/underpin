@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Underpin Studio</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>▚</text></svg>">
+</head>
+<body>
+
+<!-- Icon sprite. SVG throughout, one stroke weight, never emoji. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <g id="i-check" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></g>
+    <g id="i-x" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></g>
+    <g id="i-alert" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></g>
+    <g id="i-search" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></g>
+    <g id="i-layers" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></g>
+    <g id="i-arrow" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></g>
+    <g id="i-empty" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></g>
+  </defs>
+</svg>
+
+<div class="app">
+  <nav class="rail" aria-label="Migration steps">
+    <div class="brand">
+      <h1><svg width="18" height="18" viewBox="0 0 24 24" style="color:var(--accent)"><use href="#i-layers"/></svg> Underpin</h1>
+      <p>WORDPRESS → REACT</p>
+    </div>
+    <ul class="steps" id="steps"></ul>
+    <div class="rail-foot">
+      <p id="railSite">No site loaded</p>
+      <p>No API key required — rules resolve most pages.</p>
+    </div>
+  </nav>
+
+  <main>
+    <!-- 1 ─ Source -->
+    <section class="panel" id="p-source">
+      <header>
+        <span class="eyebrow">Step 1</span>
+        <h2>Point it at a WordPress site</h2>
+        <p>Underpin reads the sitemap, probes the REST API, and works out what the site actually runs before crawling anything. Nothing is migrated until you have agreed the scope.</p>
+      </header>
+
+      <div class="card" style="max-width:640px">
+        <div class="field">
+          <label for="url">Site URL</label>
+          <input type="url" id="url" placeholder="https://example.com" autocomplete="url" spellcheck="false">
+          <span class="help">Public pages only. Anything behind a login is flagged, never bypassed.</span>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label for="limit">Page sample</label>
+          <select id="limit">
+            <option value="12" selected>12 pages — stratified sample (fast)</option>
+            <option value="25">25 pages</option>
+            <option value="50">50 pages</option>
+            <option value="0">Every in-scope page (slow on large sites)</option>
+          </select>
+          <span class="help">The sample spreads across URL shapes, not the first N — sitemaps are date-ordered, so the first ten URLs of a content site are ten blog posts.</span>
+        </div>
+        <div class="actions">
+          <button class="btn btn--primary" id="btnInspect">Inspect site <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+          <span class="err" id="urlErr" role="alert"></span>
+        </div>
+      </div>
+
+      <div id="recent" style="margin-top:26px"></div>
+    </section>
+
+    <!-- 2 ─ Findings -->
+    <section class="panel" id="p-findings" hidden>
+      <header>
+        <span class="eyebrow">Step 2</span>
+        <h2>What the crawler found</h2>
+        <p>The discovery chain and the capability fingerprint. Every claim below is evidence the system actually observed, not an assumption about how WordPress is usually set up.</p>
+      </header>
+      <div class="grid g4" id="findStats" style="margin-bottom:18px"></div>
+      <div class="grid g2">
+        <div class="card">
+          <span class="eyebrow">Discovery chain</span>
+          <div class="log" id="findLog"></div>
+        </div>
+        <div class="card">
+          <span class="eyebrow">Capabilities detected</span>
+          <div id="findCaps"></div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" data-goto="source">Back</button>
+        <div class="spacer"></div>
+        <button class="btn btn--primary" id="btnToScope">Decide what to migrate <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 3 ─ Scope -->
+    <section class="panel" id="p-scope" hidden>
+      <header>
+        <span class="eyebrow">Step 3</span>
+        <h2>Agree the scope</h2>
+        <p>These are the decisions the system will not make on your behalf, because each one has a business consequence. Your answers become a contract that every later stage reads and the final report is judged against.</p>
+      </header>
+      <div class="note">
+        <p><strong>Excluded URLs are routed, never dropped.</strong> Anything you leave out emits a <code>410 Gone</code> or a redirect, so search engines drop it cleanly instead of finding a dead page.</p>
+      </div>
+      <div id="questions"></div>
+      <div class="actions">
+        <button class="btn" data-goto="findings">Back</button>
+        <div class="spacer"></div>
+        <button class="btn btn--primary" id="btnMigrate">Extract and match templates <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 4 ─ Review -->
+    <section class="panel" id="p-review" hidden>
+      <header>
+        <span class="eyebrow">Step 4</span>
+        <h2>Review content and templates</h2>
+        <p>Every page has a recommended template and a match score. Change any of them — the leftover count updates immediately, so you can see what a swap would cost before committing to it.</p>
+      </header>
+
+      <div id="migrateProgress" hidden>
+        <div class="card">
+          <div id="migrateLabel" style="font-size:.9rem"></div>
+          <div class="bar"><i id="migrateBar" style="width:0%"></i></div>
+          <div class="log" id="migrateLog" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <div id="reviewBody" hidden>
+        <div class="grid g4" id="reviewStats" style="margin-bottom:16px"></div>
+        <div class="card" style="margin-bottom:16px;padding:14px 18px">
+          <span class="eyebrow">Branding extracted</span>
+          <div id="brandOut"></div>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr>
+              <th>Page</th><th>Type</th><th>Structure</th><th>Template</th><th class="num">Match</th><th>Flags</th>
+            </tr></thead>
+            <tbody id="reviewRows"></tbody>
+          </table>
+        </div>
+        <div class="actions">
+          <button class="btn" data-goto="scope">Back</button>
+          <div class="spacer"></div>
+          <button class="btn btn--primary" id="btnBuild">Build the React site <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 ─ Build -->
+    <section class="panel" id="p-build" hidden>
+      <header>
+        <span class="eyebrow">Step 5</span>
+        <h2>Build and verify</h2>
+        <p>Generates the Next.js project, re-hosts every image, then checks the result mechanically. The checks read the built output — they are not assertions in a README.</p>
+      </header>
+      <div class="card" style="margin-bottom:16px">
+        <div id="buildLabel" style="font-size:.9rem">Ready.</div>
+        <div class="bar"><i id="buildBar" style="width:0%"></i></div>
+        <div class="log" id="buildLog" style="margin-top:12px"></div>
+      </div>
+      <div id="buildOut"></div>
+      <div class="actions">
+        <button class="btn" data-goto="review">Back</button>
+        <div class="spacer"></div>
+        <button class="btn" id="btnReport" hidden>Open full report</button>
+        <button class="btn btn--primary" id="btnPreview" hidden>Preview the migrated site <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+      </div>
+    </section>
+
+    <!-- 6 ─ Preview -->
+    <section class="panel" id="p-preview" hidden>
+      <header>
+        <span class="eyebrow">Step 6</span>
+        <h2>Responsive preview</h2>
+        <p>Original and migrated, side by side, at the three breakpoints the component library is built against. This doubles as the responsive check.</p>
+      </header>
+      <div class="pv-bar">
+        <select id="pvPage" aria-label="Page to preview"></select>
+        <div class="seg" role="group" aria-label="Which versions to show">
+          <button id="pvOrig" aria-pressed="true">Original</button>
+          <button id="pvMig" aria-pressed="true">Migrated</button>
+        </div>
+        <div class="seg" role="group" aria-label="Viewport widths">
+          <button data-w="375" aria-pressed="true">375</button>
+          <button data-w="768" aria-pressed="true">768</button>
+          <button data-w="1440" aria-pressed="true">1440</button>
+        </div>
+      </div>
+      <div class="note">
+        <p>The original loads from the live WordPress site, so some pages may refuse to render in a frame — that is the source site's security policy, not a migration failure. The migrated column is served locally from the static export.</p>
+      </div>
+      <div class="stage" id="pvStage"></div>
+      <div class="actions"><button class="btn" data-goto="build">Back to report</button></div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

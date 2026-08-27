@@ -227,24 +227,49 @@ export async function extractBranding(origin, urls) {
 
   const $header = $('header, [role="banner"], #masthead').first();
   const $footer = $('footer, [role="contentinfo"], #colophon').first();
+
+  // Logo resolution.
+  //
+  // Two traps here, both hit on real sites. og:image is a social share image — on
+  // elementor.com it is a photograph of a person, and using it as the logo put a
+  // stranger's face in the header of every page. And `[class*="logo"] img` is too
+  // broad: any ancestor container with "logo" somewhere in its class tree drags in
+  // whatever image it happens to wrap. A missing logo is better than a confidently
+  // wrong one — SiteHeader falls back to the site name as text.
+  const looksLikeLogo = (u) => !!u && (/logo|brand|mark|icon/i.test(u) || /\.svg(\?|$)/i.test(u));
+
+  // Image candidates are scoped to the header. Searching the whole document found
+  // tripadvisor.svg on kinsta.com — a CLIENT logo from a logo wall, not the site's own.
+  // <head> link tags stay document-wide because they are unambiguous by definition.
+  const $chrome = $header.length ? $header : $('[role="banner"], #masthead, .site-header').first();
+  const inChrome = (sel) => ($chrome.length ? $chrome.find(sel).first().attr('src') : undefined);
+
+  const logoCandidates = [
+    { source: 'wp_custom_logo', url: $('.custom-logo').first().attr('src'), trusted: true },
+    { source: 'logo_img_class', url: inChrome('img[class*="logo" i]'), trusted: true },
+    { source: 'logo_alt_text', url: inChrome('img[alt*="logo" i]'), trusted: true },
+    { source: 'apple_touch_icon', url: $('link[rel="apple-touch-icon"]').attr('href'), trusted: true },
+    { source: 'icon_link', url: $('link[rel="icon"], link[rel="shortcut icon"]').first().attr('href'), trusted: true },
+    // Only accept the loose container match when the file itself reads as a logo.
+    { source: 'header_img', url: inChrome('img'), trusted: false }
+  ].filter((c) => c.url && (c.trusted || looksLikeLogo(c.url)));
+
+  const chosenLogo = logoCandidates[0] ?? null;
+  const logo = chosenLogo?.url ?? null;
+  const logoSource = chosenLogo?.source ?? 'not_found';
+
   const contact = contactFromJsonLd($);
 
   // Fall back to tel:/mailto: links when the site emits no structured data.
   $('a[href^="tel:"]').each((_, el) => contact.phones.add($(el).attr('href').replace('tel:', '').trim()));
   $('a[href^="mailto:"]').each((_, el) => contact.emails.add($(el).attr('href').replace('mailto:', '').trim()));
 
-  const logo =
-    $('.custom-logo, .site-logo img, [class*="logo"] img').first().attr('src') ??
-    $('link[rel="apple-touch-icon"]').attr('href') ??
-    $('meta[property="og:image"]').attr('content') ??
-    null;
-
   const shell = await deriveShell(urls.slice(0, 40).map((u) => u.loc ?? u), 8);
 
   const sources = {
     colors: palette.length ? 'css_custom_properties' : 'none',
     fonts: $('link[href*="fonts.googleapis.com"]').length ? 'google_fonts_link' : 'computed_stacks',
-    logo: logo ? 'dom' : 'none',
+    logo: logoSource,
     contact: contact.locations.length ? 'jsonld' : 'link_scrape'
   };
 

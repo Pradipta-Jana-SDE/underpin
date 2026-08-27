@@ -9,6 +9,7 @@ then asking a human what to keep.
 ```bash
 npm install
 npm test                                                    # 40 tests
+npm run studio                                              # → http://localhost:4400
 
 node packages/importer/bin/underpin.js run https://example.com --yes --limit 12
 cd sites/example.com/site && npm install && npm run build   # → static export in out/
@@ -19,7 +20,12 @@ No API key required. See [Model layer](docs/model-layer.md).
 
 ## What works
 
-The whole pipeline, end to end:
+**A web studio over the whole pipeline** (`npm run studio`) — enter a URL, review what
+the crawler found, answer the scope questions, review every page's extracted structure
+and change its template, then build, verify and preview side by side. Long stages stream
+real progress rather than showing a spinner.
+
+The pipeline underneath, end to end:
 
 ```
 01 Discover     sitemap chain + REST probe
@@ -92,7 +98,7 @@ needs to see.
 
 | | Why |
 |---|---|
-| Admin dashboard | A CLI plus two static pages proves migration quality; a CRUD app proves CRUD. Right phase-two build. |
+| ~~Admin dashboard~~ | **Built** — see `packages/studio`. Originally scoped out in favour of a CLI; reversed on request. Six-step wizard covering the whole pipeline. |
 | Headless commerce | A 6–12 week engagement. Named as unavailable in the scope prompt so nobody discovers it at review. |
 | Rebuilt authentication | Gated content stays on WordPress and is proxied. |
 | Companion WP MU-plugin | The right production path, but it needs write access to production installs and reads as the coupling the brief wants removed. Argued in [decisions.md](docs/decisions.md), not built. |

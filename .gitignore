@@ -8,3 +8,4 @@ sites/*/node_modules/
 sites/*/.next/
 sites/*/out/
 .underpin/
+.shots/
