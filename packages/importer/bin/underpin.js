@@ -5,6 +5,8 @@ import { discover } from '../src/discover/index.js';
 import { fingerprint } from '../src/fingerprint/index.js';
 import { negotiateScope } from '../src/scope/index.js';
 import { extractSite, extractionStats } from '../src/extract/index.js';
+import { classifyAll } from '../src/classify/index.js';
+import { matchAll } from '../src/match/index.js';
 import { readFileSync, existsSync } from 'node:fs';
 import { log, pc } from '../src/util/log.js';
 
@@ -23,6 +25,7 @@ ${pc.bold('underpin')} — template-driven WordPress → React migration
   ${pc.bold('underpin discover')} <url>      Walk the discovery chain and print the evidence
   ${pc.bold('underpin scope')} <url>         Discover, fingerprint capabilities, agree scope
   ${pc.bold('underpin extract')} <url>       Extract content into the normalised IR (needs a scope contract)
+  ${pc.bold('underpin plan')} <url>          Classify pages and recommend templates (needs extracted IR)
 
 Options
   --yes            Take every recommended default; never prompt
@@ -192,6 +195,59 @@ async function main() {
     writeFileSync(join(out, 'extraction-stats.json'), JSON.stringify({ ...stats, failed }, null, 2));
     log.blank();
     log.ok(`IR written → ${pc.bold(join(out, 'ir', 'pages.json').replace(process.cwd() + '/', ''))} ${pc.dim(`(${((Date.now()-t0)/1000).toFixed(1)}s)`)}`);
+    return;
+  }
+
+  if (command === 'plan') {
+    const siteUrl = requireUrl();
+    const out = siteDir(siteUrl);
+    const irPath = join(out, 'ir', 'pages.json');
+    if (!existsSync(irPath)) {
+      console.error(pc.red(`No extracted IR at ${irPath}`));
+      console.error(`Run ${pc.bold(`underpin extract ${siteUrl}`)} first.`);
+      process.exit(1);
+    }
+    const pages = JSON.parse(readFileSync(irPath, 'utf8'));
+    const siteIr = JSON.parse(readFileSync(join(out, 'site.ir.json'), 'utf8'));
+
+    log.step(7, `Classifying ${pages.length} pages`);
+    const classifications = await classifyAll(pages, { nav: siteIr.nav.primary }, null);
+    const byType = {};
+    for (const c of classifications) byType[c.type] = (byType[c.type] ?? 0) + 1;
+    const needsReview = classifications.filter((c) => c.needsReview);
+    log.info(Object.entries(byType).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(' · '));
+    const byStage = {};
+    for (const c of classifications) byStage[`stage${c.stage}`] = (byStage[`stage${c.stage}`] ?? 0) + 1;
+    log.dim(`resolved at: ${Object.entries(byStage).sort().map(([k, v]) => `${k}=${v}`).join(' · ')}`);
+    if (needsReview.length) log.warn(`${needsReview.length} page(s) below the confidence bar → human review`);
+
+    log.blank();
+    log.step(8, 'Recommending templates');
+    const matches = matchAll(pages, classifications);
+    const avg = Math.round(matches.reduce((a, m) => a + m.matchConfidence, 0) / (matches.length || 1));
+    const strong = matches.filter((m) => m.matchConfidence >= 70).length;
+    const leftoverTotal = matches.reduce((a, m) => a + m.leftover.length, 0);
+
+    const byTemplate = {};
+    for (const m of matches) byTemplate[m.chosen] = (byTemplate[m.chosen] ?? 0) + 1;
+    for (const [t, n] of Object.entries(byTemplate).sort((a, b) => b[1] - a[1])) {
+      log.info(`${String(n).padStart(3)} × ${t}`);
+    }
+    log.dim(`average match confidence ${avg}% · ${strong}/${matches.length} at or above 70%`);
+    if (leftoverTotal) log.warn(`${leftoverTotal} section(s) in the leftover bucket — these block the production build until reviewed`);
+
+    log.blank();
+    log.step(9, 'Lowest-confidence pages (the review queue)');
+    for (const m of [...matches].sort((a, b) => a.matchConfidence - b.matchConfidence).slice(0, 6)) {
+      const alt = m.alternatives[0] ? ` (alt: ${m.alternatives[0].templateId} ${m.alternatives[0].confidence}%)` : '';
+      log.info(`${String(m.matchConfidence).padStart(3)}%  ${m.path.slice(0, 40).padEnd(42)}${m.pageType.padEnd(14)}${m.chosen}${alt}`);
+      if (m.missingRequired.length) log.dim(`      missing required: ${m.missingRequired.join(', ')}`);
+    }
+
+    writeFileSync(join(out, 'classifications.json'), JSON.stringify(classifications, null, 2));
+    writeFileSync(join(out, 'template-plan.json'), JSON.stringify(matches, null, 2));
+    log.blank();
+    log.ok(`template plan → ${pc.bold(join(out, 'template-plan.json').replace(process.cwd() + '/', ''))}`);
     return;
   }
 

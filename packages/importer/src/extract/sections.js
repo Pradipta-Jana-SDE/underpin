@@ -147,7 +147,7 @@ function decideArchetype(sig) {
   const mid = sig.fromBuilder ? 0.75 : 0.55;
 
   if (sig.isFirst && sig.h1 && (sig.images >= 1 || sig.bgImage)) {
-    return { archetype: 'hero', variant: { media: sig.bgImage ? 'image' : 'image', layout: sig.images > 1 ? 'full' : 'split' }, confidence: hi };
+    return { archetype: 'hero', variant: { media: 'image', layout: sig.images > 1 ? 'full' : 'split' }, confidence: hi };
   }
   if (sig.isFirst && sig.h1) return { archetype: 'hero', variant: { media: 'none', layout: 'minimal' }, confidence: mid };
   if (c.hero) return { archetype: 'hero', variant: { media: 'image', layout: 'full' }, confidence: hi };
@@ -352,6 +352,9 @@ function signals($, $sec, baseUrl, builderId, index) {
 
   return {
     isFirst: index === 0,
+    // Many themes never emit an <h1> on inner pages, or put it in the header. The
+    // resolved title is the reliable signal that a block is introducing the page.
+    title: firstTitle($, $sec),
     fromBuilder: Boolean(builderId),
     census: widgetCensus($, $sec, builderId),
     h1: $sec.find('h1').length > 0,
@@ -386,6 +389,34 @@ function signals($, $sec, baseUrl, builderId, index) {
   };
 }
 
+
+
+/** Archetypes whose whole purpose is to hold a list. */
+const COLLECTION_ARCHETYPES = new Set([
+  'feature_grid', 'logo_wall', 'team_grid', 'content_list', 'testimonial', 'faq', 'stats_strip', 'product_card_grid'
+]);
+
+/**
+ * A collection archetype with an empty items array means the classifier believed it saw
+ * a grid but the extractor recovered nothing from it — the page keeps a section and
+ * loses its content. Downgrade to a shape that actually carries the text instead.
+ */
+function guardEmptyCollection(section, sig, $, $sec) {
+  if (!COLLECTION_ARCHETYPES.has(section.archetype)) return section;
+  const items = section.slots?.items;
+  if (Array.isArray(items) && items.length > 0) return section;
+
+  const body = clean($sec.text());
+  const archetype = sig.images >= 1 && body.length > 80 ? 'text_media' : 'rich_text';
+  return {
+    ...section,
+    archetype,
+    variant: archetype === 'text_media' ? { layout: 'img_right' } : {},
+    // Lowered deliberately: we know the first read was wrong, so a human should look.
+    confidence: Math.min(section.confidence, 0.45),
+    slots: { heading: sig.title || undefined, body: body.slice(0, 8000) }
+  };
+}
 
 const COLLECTIBLE = new Set(['rich_text', 'text_media', 'feature_grid', 'logo_wall', 'testimonial', 'faq']);
 
@@ -484,6 +515,42 @@ function mergeRun(run, order) {
   };
 }
 
+
+/**
+ * Promotes the opening section to a hero.
+ *
+ * This runs after coalescing, not during classification: before the merge, the first
+ * card of a six-card grid is also "the first section", and an eager hero rule claims it
+ * and breaks the grid apart. After the merge, position 1 genuinely is the top of the
+ * page. Collections are left alone — a grid opening a page is a grid, not a hero.
+ */
+function promoteHero(sections) {
+  const first = sections[0];
+  if (!first || first.archetype === 'hero') return sections;
+  if (COLLECTION_ARCHETYPES.has(first.archetype)) return sections;
+
+  const title = first.slots?.heading ?? first.slots?.title;
+  if (!title || String(title).length > 120) return sections;
+
+  const body = String(first.slots?.body ?? '');
+  const hasMedia = first.mediaRefs.length > 0;
+  // A wall of prose under a heading is an article opening, not a hero.
+  if (!hasMedia && body.length > 600) return sections;
+
+  sections[0] = {
+    ...first,
+    archetype: 'hero',
+    variant: { media: hasMedia ? 'image' : 'none', layout: hasMedia ? 'split' : 'minimal' },
+    confidence: Math.min(0.7, first.confidence + 0.1),
+    slots: {
+      title: String(title),
+      subtitle: body ? body.slice(0, 300) : undefined,
+      cta: first.slots?.cta ?? []
+    }
+  };
+  return sections;
+}
+
 function coalesce(sections) {
   const out = [];
   let i = 0;
@@ -495,10 +562,12 @@ function coalesce(sections) {
     else for (const s of run) out.push({ ...s, id: `sec_${out.length + 1}`, order: out.length + 1 });
     i = j;
   }
-  return out.map((s) => {
-    const { _merge, ...rest } = s;
-    return rest;
-  });
+  return promoteHero(
+    out.map((s) => {
+      const { _merge, ...rest } = s;
+      return rest;
+    })
+  );
 }
 
 /** Splits a page into typed, slot-filled, confidence-scored sections. */
@@ -517,17 +586,17 @@ export function extractSections($, baseUrl, { builderId = null, shell = null } =
     const sig = signals($, $sec, baseUrl, builderId, order);
     if (sig.textLength < 15 && sig.images === 0 && !sig.forms) continue;
 
-    const { archetype, variant, confidence } = decideArchetype(sig);
+    const decided = decideArchetype(sig);
     for (const m of sig.media) allMedia.set(m.id, m);
 
-    sections.push({
+    const base = {
       id: `sec_${order + 1}`,
       order: order + 1,
-      archetype,
-      variant,
-      confidence: Number(confidence.toFixed(2)),
+      archetype: decided.archetype,
+      variant: decided.variant,
+      confidence: Number(decided.confidence.toFixed(2)),
       decidedBy: sig.fromBuilder && Object.keys(sig.census).length ? 'builder_map' : 'rule',
-      slots: fillSlots(archetype, $, $sec, sig),
+      slots: fillSlots(decided.archetype, $, $sec, sig),
       mediaRefs: sig.media.map((m) => m.id),
       style: null,
       sourceSelector: $sec.attr('class') ? `.${String($sec.attr('class')).split(/\s+/)[0]}` : undefined,
@@ -544,7 +613,8 @@ export function extractSections($, baseUrl, { builderId = null, shell = null } =
       // Swiper/Slick keep only the active slide in the DOM. A static parse sees one
       // frame and silently loses the rest — flag it rather than scoring it as complete.
       incompleteCapture: sig.isCarousel && sig.slideCount <= 1
-    });
+    };
+    sections.push(guardEmptyCollection(base, sig, $, $sec));
     order++;
   }
 
