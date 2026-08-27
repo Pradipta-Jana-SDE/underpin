@@ -4,10 +4,11 @@ import { join, resolve } from 'node:path';
 import { discover } from '../src/discover/index.js';
 import { fingerprint } from '../src/fingerprint/index.js';
 import { negotiateScope } from '../src/scope/index.js';
-import { extractSite, extractionStats } from '../src/extract/index.js';
+import { extractSite, extractionStats, stratifiedSample } from '../src/extract/index.js';
 import { classifyAll } from '../src/classify/index.js';
 import { matchAll } from '../src/match/index.js';
 import { generateSite } from '../src/generate/index.js';
+import { generateFidelitySite } from '../src/generate/fidelity.js';
 import { writeReport } from '../src/report/index.js';
 import { verifyBuild } from '../src/verify/index.js';
 import { reuseMatrix } from '../src/report/reuse.js';
@@ -39,7 +40,15 @@ ${pc.bold('underpin')} — template-driven WordPress → React migration
 Options
   --yes            Take every recommended default; never prompt
   --limit <n>      Sample n pages, stratified across URL shapes
-  --media <n>      Cap media downloads
+  --media <n>      Cap media/asset downloads
+  --mode <m>       template (default) | fidelity
+
+Modes
+  template   Rebuilds each page from a shared React component library. Templates are
+             reusable across sites; the result is tidier than the original, not identical.
+  fidelity   Renders each page in a real browser and keeps the DOM, the site's own CSS
+             and its animation scripts. Looks identical; nothing is shared between sites.
+             Needs Playwright: npx playwright install chromium
   --out <dir>      Artefact directory            (default: ./sites/<host>)
 
 The pipeline needs no API key. Rules resolve most pages; a model only shrinks the
@@ -207,6 +216,34 @@ async function stagePlan(siteUrl, out) {
   return { classifications, matches };
 }
 
+async function stageBuildFidelity(siteUrl, out, mediaLimit, limit) {
+  need(out, ['migration.plan.json'], siteUrl);
+  const plan = readJson(join(out, 'migration.plan.json'));
+  const appDir = join(out, 'site');
+  const urls = limit ? stratifiedSample(plan.inScopeUrls, limit) : plan.inScopeUrls;
+
+  log.blank();
+  log.step(7, `Generating an exact-fidelity React site`);
+  log.dim('Renders each page in a real browser, keeps its CSS and animation scripts.');
+
+  const result = await generateFidelitySite({
+    outDir: appDir, siteUrl, plan, urls, mediaLimit,
+    onProgress: (ev) => {
+      if (ev.type === 'stage') { process.stdout.write('\r'.padEnd(60) + '\r'); log.info(ev.label); }
+      else if (ev.type === 'progress') process.stdout.write(`\r   rendered ${ev.done}/${ev.total}   `);
+      else if (ev.type === 'assets') process.stdout.write(`\r   mirrored ${ev.done}/${ev.total} assets   `);
+    }
+  });
+  process.stdout.write('\r'.padEnd(60) + '\r');
+
+  log.info(`${result.routes.length} pages captured`);
+  log.info(`assets: ${result.media.downloaded} mirrored · ${result.media.failed.length} failed`);
+  if (result.captureFailures.length) log.warn(`${result.captureFailures.length} page(s) failed to render`);
+  writeJson(join(out, 'generate-result.json'), result);
+  log.ok(`site → ${pc.bold(appDir.replace(process.cwd() + '/', ''))}`);
+  return result;
+}
+
 async function stageBuild(siteUrl, out, mediaLimit) {
   need(out, ['migration.plan.json', 'site.ir.json', 'ir/pages.json', 'template-plan.json'], siteUrl);
   const plan = readJson(join(out, 'migration.plan.json'));
@@ -309,20 +346,33 @@ async function main() {
     case 'scope':    await stageScope(siteUrl, out, flag('yes')); break;
     case 'extract':  await stageExtract(siteUrl, out, num('limit')); break;
     case 'plan':     await stagePlan(siteUrl, out); break;
-    case 'build':    await stageBuild(siteUrl, out, num('media')); break;
+    case 'build':
+      opt('mode', 'template') === 'fidelity'
+        ? await stageBuildFidelity(siteUrl, out, num('media'), num('limit'))
+        : await stageBuild(siteUrl, out, num('media'));
+      break;
     case 'report':   await stageReport(siteUrl, out); break;
     case 'verify':   await stageVerify(siteUrl, out); break;
-    case 'run':
+    case 'run': {
+      const fidelity = opt('mode', 'template') === 'fidelity';
       await stageScope(siteUrl, out, flag('yes'));
-      await stageExtract(siteUrl, out, num('limit'));
-      await stagePlan(siteUrl, out);
-      await stageBuild(siteUrl, out, num('media'));
-      await stageReport(siteUrl, out);
+      if (fidelity) {
+        // Fidelity mode needs no IR: it keeps the page as rendered rather than
+        // reading it for meaning. Extraction still runs so the report has something
+        // to describe, but it is not on the critical path.
+        await stageBuildFidelity(siteUrl, out, num('media'), num('limit'));
+      } else {
+        await stageExtract(siteUrl, out, num('limit'));
+        await stagePlan(siteUrl, out);
+        await stageBuild(siteUrl, out, num('media'));
+        await stageReport(siteUrl, out);
+      }
       await stageVerify(siteUrl, out);
       log.blank();
       log.ok(pc.bold('Migration complete.'));
       log.dim(`build the site:  cd "${join(out, 'site').replace(process.cwd() + '/', '')}" && npm install && npm run build`);
       break;
+    }
     default:
       console.error(pc.red(`Unknown command: ${command}`));
       console.log(HELP);

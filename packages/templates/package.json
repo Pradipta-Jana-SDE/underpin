@@ -9,7 +9,8 @@
     "./Template": "./src/Template.jsx",
     "./sections": "./src/sections/index.jsx",
     "./styles.css": "./src/styles.css",
-    "./theme": "./src/theme.js"
+    "./theme": "./src/theme.js",
+    "./DomTree": "./src/DomTree.jsx"
   },
   "dependencies": {
     "@underpin/vocabulary": "*",

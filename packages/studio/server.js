@@ -411,7 +411,7 @@ const server = createServer(async (req, res) => {
     // A static export references its assets from the site root (/media/..., /_next/...),
     // which breaks the moment it is served under /preview/<host>/. Resolve those root
     // requests back to the right export using the Referer of the iframe that asked.
-    if (/^\/(media|_next|favicon)/.test(path)) {
+    if (/^\/(media|assets|_next|favicon)/.test(path)) {
       const ref = req.headers.referer ?? '';
       const m = /\/preview\/([^/]+)/.exec(ref);
       if (m) {
