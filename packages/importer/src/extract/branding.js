@@ -3,7 +3,14 @@ import { get, mapLimit } from '../util/http.js';
 import { originalUrl } from './media.js';
 
 const clean = (s) => (s ?? '').replace(/\s+/g, ' ').trim();
-const absUrl = (s, base) => { try { return new URL(s, base).toString(); } catch { return null; } };
+// `new URL(undefined, origin)` does not throw — it coerces to the string "undefined" and
+// resolves to origin + "/undefined", which then gets fetched and 404s. A missing favicon
+// became a real download failure in the report this way.
+const absUrl = (s, base) => {
+  const t = s == null ? '' : String(s).trim();
+  if (!t || t === 'undefined' || t === 'null') return null;
+  try { return new URL(t, base).toString(); } catch { return null; }
+};
 
 /** Colours declared as CSS custom properties are intentional; sampled colours are guesses. */
 function paletteFromCss(cssText) {

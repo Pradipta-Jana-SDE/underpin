@@ -2,8 +2,13 @@ import { createHash } from 'node:crypto';
 
 const abs = (src, base) => {
   if (!src) return null;
+  // `new URL('undefined', origin)` resolves happily to origin + '/undefined', so a
+  // stringified undefined that slipped through anywhere upstream becomes a real fetch
+  // and a real 404 in the report. Reject the literals rather than hunt every source.
+  const t = String(src).trim();
+  if (!t || t === 'undefined' || t === 'null' || t === 'about:blank') return null;
   try {
-    return new URL(src.trim(), base).toString();
+    return new URL(t, base).toString();
   } catch {
     return null;
   }
