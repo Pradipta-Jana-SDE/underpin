@@ -4,19 +4,86 @@ Template-driven WordPress → React migration. Lifts content, brand, URLs and SE
 WordPress site onto reusable React templates — detecting what the site actually runs,
 then asking a human what to keep.
 
-## Quick start
+## Running it
+
+Needs **Node 20+** (built on 22). No API key, no database, no Docker.
 
 ```bash
 npm install
-npm test                                                    # 40 tests
-npm run studio                                              # → http://localhost:4400
-
-node packages/importer/bin/underpin.js run https://example.com --yes --limit 12
-cd sites/example.com/site && npm install && npm run build   # → static export in out/
-node packages/importer/bin/underpin.js verify https://example.com
 ```
 
-No API key required. See [Model layer](docs/model-layer.md).
+### 1. The studio (recommended)
+
+```bash
+npm run studio          # → http://localhost:4400
+```
+
+Open that URL and work through seven steps: enter a site → review what the crawler
+found → answer the scope questions → **pick which pages you want** → review each page's
+template → build and verify → preview side by side. The build step has a
+**Download codebase (.zip)** button.
+
+### 2. Or the CLI, if you prefer it headless
+
+```bash
+npm run migrate -- https://example.com --yes --limit 12
+```
+
+`--yes` takes the recommended answer to every scope question instead of prompting.
+`--limit` samples that many pages, spread across URL shapes; drop it to migrate
+everything. Individual stages run on their own too:
+
+```bash
+npm run underpin -- discover https://example.com   # just the discovery evidence
+npm run underpin -- scope    https://example.com   # capability questions, interactive
+npm run underpin -- verify   https://example.com   # acceptance checks on a built export
+npm run reuse                                      # which templates work across sites
+```
+
+### 3. Build the migrated site
+
+The generator writes a Next.js project; it does not install or build it for you.
+
+```bash
+cd sites/example.com/site
+npm install
+npm run build           # static export → ./out
+npx serve out           # view it
+```
+
+The downloaded zip is the same thing with the workspace packages vendored in, so it
+installs and builds anywhere — no monorepo required.
+
+### 4. Checking the result
+
+```bash
+npm run underpin -- verify https://example.com     # 6 mechanical acceptance checks
+npm run score -- https://example.com http://localhost:4400/preview/example.com /
+```
+
+`score` compares the migrated page against the live original — visual, text and node
+coverage at 375/768/1440.
+
+### Fidelity mode (exact reproduction)
+
+Needs a browser engine, once:
+
+```bash
+npx playwright install chromium
+npm run underpin -- build https://example.com --mode fidelity --limit 5
+```
+
+Renders each page in a real browser and keeps its own CSS and animation scripts.
+Static pages come out ~99.8% pixel-identical. See the trade-off note below.
+
+### Common problems
+
+| Symptom | Cause |
+|---|---|
+| `EADDRINUSE` on 4400 | Studio already running. `PORT=4500 npm run studio` |
+| Fidelity build fails on `chromium` | Run `npx playwright install chromium` |
+| Studio preview shows an unstyled page | The site was generated but not built — run `npm run build` inside `sites/<host>/site` |
+| Crawl finds 0 URLs | Site has no reachable sitemap and blocked the link-crawl fallback; check `sites/<host>/discovery.json` for the chain |
 
 ## What works
 

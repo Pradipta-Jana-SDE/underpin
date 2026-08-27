@@ -11,13 +11,13 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc -b",
-    "test": "node --test packages/importer/test/*.test.js",
+    "studio": "node packages/studio/server.js",
+    "migrate": "node packages/importer/bin/underpin.js run",
     "underpin": "node packages/importer/bin/underpin.js",
-    "scope": "node packages/importer/bin/underpin.js scope",
-    "discover": "node packages/importer/bin/underpin.js discover",
-    "studio": "node packages/studio/server.js"
+    "test": "node --test packages/importer/test/*.test.js",
+    "build": "npm run build --workspaces --if-present",
+    "reuse": "node packages/importer/bin/underpin.js reuse",
+    "score": "node scripts/fidelity-score.mjs"
   },
   "dependencies": {
     "pixelmatch": "^7.2.0",
