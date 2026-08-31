@@ -13,4 +13,8 @@ dist/
 sites/
 .underpin/
 CLAUDE.md
+# Working notes and correspondence, not project documentation.
+docs/reply-to-send.txt
+docs/fidelity-brief-for-architect.md
+docs/componentized-fidelity-brief.md
 .shots/
