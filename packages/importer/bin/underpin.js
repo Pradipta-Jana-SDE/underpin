@@ -10,8 +10,13 @@ import { matchAll } from '../src/match/index.js';
 import { generateSite } from '../src/generate/index.js';
 import { generateFidelitySite } from '../src/generate/fidelity.js';
 import { writeReport } from '../src/report/index.js';
+import { writeFidelityReport } from '../src/report/fidelity.js';
+import { resolveTargets, describeTargets } from '../src/generate/targets.js';
 import { verifyBuild } from '../src/verify/index.js';
+import { scorePages } from '../src/verify/score.js';
+import { smokeCheck } from '../src/verify/animation.js';
 import { reuseMatrix } from '../src/report/reuse.js';
+import { createLlm } from '../src/llm/index.js';
 import { log, pc } from '../src/util/log.js';
 
 const argv = process.argv.slice(2);
@@ -35,21 +40,30 @@ ${pc.bold('underpin')} — template-driven WordPress → React migration
   ${pc.bold('underpin build')} <url>         Generate the React site
   ${pc.bold('underpin report')} <url>        Write the migration report and preview
   ${pc.bold('underpin verify')} <url>        Check the built export against the acceptance criteria
+  ${pc.bold('underpin measure')} <url>       Score the built export against the live original
   ${pc.bold('underpin reuse')}                Which templates absorbed pages from more than one site
 
 Options
   --yes            Take every recommended default; never prompt
   --limit <n>      Sample n pages, stratified across URL shapes
   --media <n>      Cap media/asset downloads
-  --mode <m>       template (default) | fidelity
+  --mode <m>       fidelity (default) | template
   --componentize   fidelity only: split each page into per-section components
+  --score          verify: also measure the served export (needs --base)
+  --base <url>     where the built export is served    (default: http://localhost:3000)
+  --llm            use a model to name sections (optional; falls back to rules)
+  --no-virgin      fidelity only: capture after the scroll pass (the old behaviour).
+                   Use if a page's reveal animations leave content invisible.
 
 Modes
-  template   Rebuilds each page from a shared React component library. Templates are
-             reusable across sites; the result is tidier than the original, not identical.
   fidelity   Renders each page in a real browser and keeps the DOM, the site's own CSS
              and its animation scripts. Looks identical; nothing is shared between sites.
              Needs Playwright: npx playwright install chromium
+  template   Rebuilds each page from a shared React component library. Templates are
+             reusable across sites; the result is tidier than the original, not identical.
+
+Pages built are the ones selected in the studio, if a selection exists. Otherwise every
+in-scope URL, or a stratified sample of them when --limit is given.
   --out <dir>      Artefact directory            (default: ./sites/<host>)
 
 The pipeline needs no API key. Rules resolve most pages; a model only shrinks the
@@ -221,15 +235,27 @@ async function stageBuildFidelity(siteUrl, out, mediaLimit, limit) {
   need(out, ['migration.plan.json'], siteUrl);
   const plan = readJson(join(out, 'migration.plan.json'));
   const appDir = join(out, 'site');
-  const urls = limit ? stratifiedSample(plan.inScopeUrls, limit) : plan.inScopeUrls;
+  const targets = resolveTargets(plan, { limit });
 
   log.blank();
   log.step(7, `Generating an exact-fidelity React site`);
   log.dim('Renders each page in a real browser, keeps its CSS and animation scripts.');
 
+  // Off unless asked for, even when a key is present: a demo has to be reproducible, and
+  // the rules already name every section.
+  const llm = createLlm({ enabled: flag('llm') });
+  if (flag('llm')) {
+    (llm.available ? log.info : log.warn)(
+      llm.available ? `naming sections with ${llm.model}` : `model layer unavailable (${llm.reason}) — using rules`
+    );
+  }
+  if (targets.source === 'selected') log.info(`building the ${targets.urls.length} pages selected in the studio`);
+
   const result = await generateFidelitySite({
-    outDir: appDir, siteUrl, plan, urls, mediaLimit,
+    outDir: appDir, siteUrl, plan, urls: targets.urls, mediaLimit,
     componentize: flag('componentize'),
+    virgin: !flag('no-virgin'),
+    llm,
     onProgress: (ev) => {
       if (ev.type === 'stage') { process.stdout.write('\r'.padEnd(60) + '\r'); log.info(ev.label); }
       else if (ev.type === 'progress') process.stdout.write(`\r   rendered ${ev.done}/${ev.total}   `);
@@ -277,10 +303,11 @@ async function stageBuild(siteUrl, out, mediaLimit) {
 
 async function stageVerify(siteUrl, out) {
   need(out, ['generate-result.json'], siteUrl);
-  const { routes } = readJson(join(out, 'generate-result.json'));
+  const generated = readJson(join(out, 'generate-result.json'));
+  const { routes } = generated;
   log.blank();
   log.step(9, 'Verifying the export');
-  const result = verifyBuild({ outDir: out, siteUrl, routes });
+  const result = verifyBuild({ outDir: out, siteUrl, routes, generated });
   if (!result.built) {
     log.warn('no export yet — build the site first, then re-run verify');
     log.dim(`cd "${join(out, 'site').replace(process.cwd() + '/', '')}" && npm install && npm run build`);
@@ -298,13 +325,81 @@ async function stageVerify(siteUrl, out) {
 }
 
 async function stageReport(siteUrl, out) {
-  need(out, ['template-plan.json', 'generate-result.json'], siteUrl);
+  // Dispatch on what the build actually produced rather than on the flags of this
+  // invocation, so `underpin report <url>` describes the export that is on disk.
+  need(out, ['generate-result.json'], siteUrl);
+  const mode = readJson(join(out, 'generate-result.json'))?.mode ?? 'template';
+  if (mode === 'template') need(out, ['template-plan.json'], siteUrl);
+
   log.blank();
   log.step(8, 'Writing migration report');
-  const paths = await writeReport(out, siteUrl);
+  const paths = mode === 'fidelity' ? await writeFidelityReport(out, siteUrl) : await writeReport(out, siteUrl);
   log.ok(`report  → ${pc.bold(paths.report.replace(process.cwd() + '/', ''))}`);
   log.ok(`preview → ${pc.bold(paths.preview.replace(process.cwd() + '/', ''))}`);
   return paths;
+}
+
+/**
+ * Stage 10: the checks that need the site running.
+ *
+ * Everything in `verify` reads files. These two load the built pages in a browser — one
+ * compares them pixel by pixel against the live original, the other asks whether the
+ * site's own scripts actually booted. Separate stage because it needs the export served
+ * somewhere, which is a thing the operator does, not something this tool should assume.
+ */
+async function stageMeasure(siteUrl, out, base) {
+  need(out, ['generate-result.json'], siteUrl);
+  const generated = readJson(join(out, 'generate-result.json'));
+  const paths = generated.routes.map((r) => r.path);
+
+  log.blank();
+  log.step(10, 'Measuring the built export against the original');
+  log.dim(`serving from ${base} — start it with: cd "${join(out, 'site').replace(process.cwd() + '/', '')}" && npx serve out -l 3000`);
+
+  const score = await scorePages({
+    origin: new URL(siteUrl).origin,
+    migratedBase: base,
+    paths,
+    outDir: out,
+    onProgress: ({ done, total, path, width }) =>
+      process.stdout.write(`\r   scoring ${done}/${total}  ${path} @ ${width}px      `)
+  });
+  process.stdout.write('\r'.padEnd(60) + '\r');
+
+  if (score.skipped) {
+    log.warn(`visual score skipped — ${score.reason}`);
+  } else {
+    // Two numbers, side by side, never averaged: they answer different questions and a
+    // blend hides the one a reviewer needs to see.
+    const o = score.overall;
+    const pct = (v) => (v == null ? 'n/a' : `${(v * 100).toFixed(1)}%`);
+    log.info(`design fidelity  ${pct(o.visual)}`);
+    log.info(`content fidelity ${pct(o.text)}`);
+    log.info(`node coverage    ${pct(o.nodes)}`);
+    // Never let a mean over the pages that loaded pass for a score of the migration.
+    if (o.measured < o.total) {
+      log.warn(`measured ${o.measured}/${o.total} page-widths — the rest did not render:`);
+      for (const f of o.failed.slice(0, 4)) log.dim(`     ${f.path} @ ${f.width}px — ${f.error}`);
+    } else {
+      log.dim(`measured all ${o.total} page-widths`);
+    }
+  }
+
+  const smoke = await smokeCheck({ migratedBase: base, paths });
+  writeJson(join(out, '_migration', 'smoke.json'), smoke);
+  if (smoke.skipped) {
+    log.warn(`animation smoke check skipped — ${smoke.reason}`);
+  } else {
+    for (const pg of smoke.pages) {
+      const s = pg.scripts;
+      const detail = s ? `${s.ran}/${s.total} scripts ran` : 'no replay counter';
+      (pg.pass ? log.ok : log.fail)(`${pg.path.padEnd(30)} ${pc.dim(detail)}`);
+      for (const r of pg.reasons ?? []) log.dim(`     ${r}`);
+    }
+  }
+
+  await stageReport(siteUrl, out);
+  return { score, smoke };
 }
 
 /* -------------------------------------------------------------------- main */
@@ -349,20 +444,26 @@ async function main() {
     case 'extract':  await stageExtract(siteUrl, out, num('limit')); break;
     case 'plan':     await stagePlan(siteUrl, out); break;
     case 'build':
-      opt('mode', 'template') === 'fidelity'
+      opt('mode', 'fidelity') !== 'template'
         ? await stageBuildFidelity(siteUrl, out, num('media'), num('limit'))
         : await stageBuild(siteUrl, out, num('media'));
       break;
     case 'report':   await stageReport(siteUrl, out); break;
-    case 'verify':   await stageVerify(siteUrl, out); break;
+    case 'verify':
+      await stageVerify(siteUrl, out);
+      if (flag('score')) await stageMeasure(siteUrl, out, opt('base', 'http://localhost:3000'));
+      break;
+    case 'measure':  await stageMeasure(siteUrl, out, opt('base', 'http://localhost:3000')); break;
     case 'run': {
-      const fidelity = opt('mode', 'template') === 'fidelity';
+      const fidelity = opt('mode', 'fidelity') !== 'template';
       await stageScope(siteUrl, out, flag('yes'));
       if (fidelity) {
-        // Fidelity mode needs no IR: it keeps the page as rendered rather than
-        // reading it for meaning. Extraction still runs so the report has something
-        // to describe, but it is not on the critical path.
+        // Fidelity mode needs no IR: it keeps each page as rendered rather than reading
+        // it for meaning, so extraction, classification and matching are all skipped.
+        // The report is not skipped — a build with no artefact beside it is a site
+        // ripper rather than an engineering deliverable.
         await stageBuildFidelity(siteUrl, out, num('media'), num('limit'));
+        await stageReport(siteUrl, out);
       } else {
         await stageExtract(siteUrl, out, num('limit'));
         await stagePlan(siteUrl, out);

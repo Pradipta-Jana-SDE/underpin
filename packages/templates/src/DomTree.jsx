@@ -14,41 +14,9 @@
  */
 import React from 'react';
 
-const VOID = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);
-
-/** Attributes React spells differently from HTML. */
-const RENAME = {
-  class: 'className', for: 'htmlFor', srcset: 'srcSet', novalidate: 'noValidate',
-  autocomplete: 'autoComplete', autofocus: 'autoFocus', tabindex: 'tabIndex',
-  readonly: 'readOnly', maxlength: 'maxLength', minlength: 'minLength',
-  colspan: 'colSpan', rowspan: 'rowSpan', usemap: 'useMap', datetime: 'dateTime',
-  enctype: 'encType', formaction: 'formAction', crossorigin: 'crossOrigin',
-  referrerpolicy: 'referrerPolicy', playsinline: 'playsInline', frameborder: 'frameBorder',
-  allowfullscreen: 'allowFullScreen', contenteditable: 'contentEditable',
-  spellcheck: 'spellCheck', accesskey: 'accessKey', inputmode: 'inputMode'
-};
-
-const BOOLEAN = new Set([
-  'disabled','checked','selected','readOnly','required','autoFocus','multiple','muted',
-  'controls','loop','autoPlay','open','hidden','noValidate','playsInline','allowFullScreen'
-]);
-
-/** Inline `style` arrives as a CSS string; React wants an object. */
-function styleToObject(css) {
-  const out = {};
-  if (typeof css !== 'string') return out;
-  for (const decl of css.split(';')) {
-    const i = decl.indexOf(':');
-    if (i < 1) continue;
-    const prop = decl.slice(0, i).trim();
-    const value = decl.slice(i + 1).trim();
-    if (!prop || !value) continue;
-    // Custom properties must keep their exact name; everything else camelCases.
-    const key = prop.startsWith('--') ? prop : prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
-    out[key] = value;
-  }
-  return out;
-}
+// The tables live in a plain-JS sibling so the importer's JSX codegen can import the same
+// copy — bare `node` cannot load this file, and two hand-maintained copies would drift.
+import { VOID, RENAME, BOOLEAN, styleToObject } from './dom-tables.js';
 
 function toProps(attrs = {}, key) {
   const props = { key };
@@ -109,14 +77,20 @@ export function SiteScripts({ scripts = [] }) {
     let cancelled = false;
     const added = [];
 
+    // A migrated page that looks right but ran none of its scripts is the failure mode
+    // nobody notices until a carousel does not move. The counter turns "did the replay
+    // work" from an opinion into something a verifier can read out of the live page.
+    const stats = { total: scripts.length, ran: 0, failed: 0 };
+    window.__underpin = stats;
+
     const runExternal = (src) =>
       new Promise((resolve) => {
         const el = document.createElement('script');
         el.src = src;
         el.async = false;
-        el.onload = resolve;
+        el.onload = () => { stats.ran++; resolve(); };
         // A single failed animation script must not stall the rest of the chain.
-        el.onerror = resolve;
+        el.onerror = () => { stats.failed++; resolve(); };
         document.body.appendChild(el);
         added.push(el);
       });
@@ -127,8 +101,10 @@ export function SiteScripts({ scripts = [] }) {
         el.textContent = code;
         document.body.appendChild(el);
         added.push(el);
+        stats.ran++;
       } catch {
         /* a snippet that throws should not take the page with it */
+        stats.failed++;
       }
     };
 

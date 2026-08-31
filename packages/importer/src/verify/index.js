@@ -22,7 +22,23 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * source domain, the migrated site depends on WordPress staying up, and "does not depend
  * on WordPress at runtime" is false no matter what the architecture diagram claims.
  */
-export function verifyBuild({ outDir, siteUrl, routes }) {
+
+/**
+ * The document with every anchor destination blanked out.
+ *
+ * Two forms, because Next writes the page twice: once as HTML, and once as the serialized
+ * React tree in its flight payload, where the same link is `["$","a",null,{"href":"…"}]`
+ * with the quotes backslash-escaped inside a script string. Handling only the HTML form
+ * makes the check pass or fail depending on which copy the URL happened to land in, which
+ * is not a property of the migration at all.
+ */
+function withoutAnchorHrefs(html) {
+  return html
+    .replace(/<a\b[^>]*>/gi, '<a>')
+    .replace(/(\\?"a\\?",\s*null,\s*\{\\?"href\\?":\s*\\?")[^"\\]*/g, '$1');
+}
+
+export function verifyBuild({ outDir, siteUrl, routes, generated = null }) {
   const dist = join(outDir, 'site', 'out');
   if (!existsSync(dist)) {
     return {
@@ -92,9 +108,14 @@ export function verifyBuild({ outDir, siteUrl, routes }) {
   });
 
   // 3. SEO essentials.
+  // Next emits its own 404 pages. They were never migrated from anything, so holding them
+  // to the source site's SEO is measuring the framework rather than the migration — and it
+  // is enough to fail an otherwise clean two-page export.
+  const contentFiles = files.filter((f) => !/(^|[\\/])404([\\/]|\.html$)/.test(f));
+
   let noTitle = 0;
   let noCanonical = 0;
-  for (const f of files) {
+  for (const f of contentFiles) {
     const html = readFileSync(f, 'utf8');
     if (!/<title>[^<]{1,}<\/title>/i.test(html)) noTitle++;
     if (!/rel="canonical"/i.test(html)) noCanonical++;
@@ -103,14 +124,14 @@ export function verifyBuild({ outDir, siteUrl, routes }) {
     id: 'seo_title',
     label: 'Every page has a non-empty title',
     pass: noTitle === 0,
-    detail: noTitle ? `${noTitle} of ${files.length} page(s) missing a title` : `${files.length} pages checked`
+    detail: noTitle ? `${noTitle} of ${contentFiles.length} page(s) missing a title` : `${contentFiles.length} pages checked`
   });
   checks.push({
     id: 'seo_canonical',
     label: 'Canonical links carried across',
     // Soft: a page whose source had no canonical should not fail the build.
-    pass: noCanonical <= Math.ceil(files.length * 0.25),
-    detail: `${files.length - noCanonical}/${files.length} pages carry a canonical`
+    pass: noCanonical <= Math.ceil(contentFiles.length * 0.25),
+    detail: `${contentFiles.length - noCanonical}/${contentFiles.length} pages carry a canonical`
   });
 
   // 4. Sitemap and robots — cheap, and their absence is an easy own goal.
@@ -125,12 +146,43 @@ export function verifyBuild({ outDir, siteUrl, routes }) {
   // 5. No WordPress runtime endpoints leaked into the output.
   // wp-json belongs here too: a surviving REST link in <head> is a live reference to the
   // old install, and grepping only for wp-admin/wp-login/xmlrpc missed it entirely.
-  const wpArtefacts = files.filter((f) => /wp-admin|wp-login|xmlrpc\.php|\/wp-json\//i.test(readFileSync(f, 'utf8')));
+  //
+  // A link in the page's own body copy is not the same thing. WordPress's default sample
+  // page literally says "go to your dashboard" and links to wp-admin; that is content the
+  // site always had, it loads nothing, and failing the build over it would be reporting
+  // the source site's copy as a migration defect. It is still surfaced, because a link
+  // pointing at the old install is worth a human's attention — just not a build failure.
+  // Same distinction the origin-independence check already draws.
+  const WP = /wp-admin|wp-login|xmlrpc\.php|\/wp-json\//i;
+  const runtimeRefs = [];
+  const contentRefs = [];
+  for (const f of files) {
+    const html = readFileSync(f, 'utf8');
+    if (!WP.test(html)) continue;
+    (WP.test(withoutAnchorHrefs(html)) ? runtimeRefs : contentRefs).push(f);
+  }
   checks.push({
     id: 'no_wp_runtime',
-    label: 'No wp-admin / wp-login / xmlrpc / wp-json references',
-    pass: wpArtefacts.length === 0,
-    detail: wpArtefacts.length ? `${wpArtefacts.length} page(s) reference WordPress endpoints` : 'clean'
+    label: 'Nothing loads from wp-admin / wp-login / xmlrpc / wp-json',
+    pass: runtimeRefs.length === 0,
+    detail: runtimeRefs.length
+      ? `${runtimeRefs.length} page(s) still load from WordPress`
+      : contentRefs.length
+        ? `clean — ${contentRefs.length} page(s) link to the old admin in body copy, worth a look`
+        : 'clean'
+  });
+
+  // 6. Componentisation actually produced components.
+  const parity = generated?.parity;
+  checks.push({
+    id: 'jsx_parity',
+    label: 'Every section emitted as editable JSX',
+    pass: !parity || parity.fallbacks.length === 0,
+    detail: !parity
+      ? 'not a componentised build'
+      : parity.fallbacks.length
+        ? `${parity.fallbacks.length}/${parity.sections} fell back to the runtime renderer — ${parity.fallbacks.slice(0, 3).map((f) => `${f.key}/${f.id}`).join(', ')}`
+        : `${parity.ok}/${parity.sections} sections round-trip to the captured DOM`
   });
 
   return { built: true, pages: files.length, checks, passed: checks.every((c) => c.pass) };

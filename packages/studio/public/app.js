@@ -21,7 +21,18 @@ const state = {
   siteUrl: null, host: null, limit: 12,
   reached: new Set(['source']),
   questions: [], review: [], templates: [], verify: null, routes: [],
-  groups: [], selected: new Set()
+  groups: [], selected: new Set(),
+  // Exact copy is the default: it is what someone opening a migration tool is asking for.
+  mode: 'fidelity', componentize: true, llm: false
+};
+
+const MODE_HELP = {
+  fidelity: `Renders every selected page in a real browser and keeps it verbatim — its DOM, its
+    own stylesheets and the scripts that drive its animations, re-hosted locally. Nothing calls
+    WordPress at runtime.`,
+  template: `Reads what each page means and rebuilds it from a library of 15 reusable React
+    section components. Tidier and far easier to maintain, but visibly not the same page — use
+    this when the migration is a redesign.`
 };
 
 /* ------------------------------------------------------------------ chrome */
@@ -475,36 +486,165 @@ async function build() {
   $('#btnPreview').hidden = true;
   $('#btnReport').hidden = true;
   $('#btnZip').hidden = true;
+  $('#btnScore').hidden = true;
 
-  const res = await post('/api/build', { siteUrl: state.siteUrl });
+  const res = await post('/api/build', {
+    siteUrl: state.siteUrl,
+    mode: state.mode,
+    componentize: state.componentize,
+    llm: state.llm
+  });
   for await (const ev of ndjson(res)) {
     if (ev.type === 'stage') { $('#buildLabel').textContent = ev.label; logLine(log, ev.label); }
     else if (ev.type === 'note') logLine(log, ev.text);
-    else if (ev.type === 'generated') {
+    // Fidelity mode's two long phases report their own progress. Without these the bar sits
+    // at 10% through the slowest part of the run, which reads as a hang.
+    else if (ev.type === 'progress') {
+      $('#buildBar').style.width = `${10 + Math.round((ev.done / Math.max(ev.total, 1)) * 25)}%`;
+      $('#buildLabel').textContent = `Rendering ${ev.done}/${ev.total} — ${ev.url ?? ''}`;
+    } else if (ev.type === 'assets') {
+      $('#buildBar').style.width = `${35 + Math.round((ev.done / Math.max(ev.total, 1)) * 20)}%`;
+      $('#buildLabel').textContent = `Mirroring assets ${ev.done}/${ev.total}`;
+    } else if (ev.type === 'generated') {
       $('#buildBar').style.width = '55%';
       logLine(log, `${ev.routes} routes · ${ev.media.downloaded} media downloaded, ${ev.media.failed.length} failed`, ev.media.failed.length ? 'wa' : 'ok');
+      if (ev.parity) {
+        const bad = ev.parity.fallbacks?.length ?? 0;
+        logLine(log, `${ev.parity.ok}/${ev.parity.sections} sections emitted as real JSX${bad ? ` · ${bad} fell back to the runtime renderer` : ''}`, bad ? 'wa' : 'ok');
+      }
       state.config = ev.config;
+      if (ev.routeList?.length) state.routes = ev.routeList;
     } else if (ev.type === 'report') {
       $('#buildBar').style.width = '80%';
       state.report = ev;
       logLine(log, `report: ${ev.counts.pass} pass · ${ev.counts.warn} warn · ${ev.counts.fail} fail`, ev.counts.fail ? 'wa' : 'ok');
     } else if (ev.type === 'verify') {
       state.verify = ev.verify;
-      $('#buildBar').style.width = '100%';
+      $('#buildBar').style.width = '85%';
       renderVerify(ev.verify);
       for (const c of ev.verify.checks ?? []) logLine(log, `${c.label} — ${c.detail}`, c.pass ? 'ok' : 'no');
     } else if (ev.type === 'error') {
       logLine(log, ev.message, 'no');
     } else if (ev.type === 'done') {
-      $('#buildLabel').textContent = 'Done.';
       state.host = ev.host;
-      reach('preview');
-      $('#btnPreview').hidden = false;
       $('#btnReport').hidden = false;
       $('#btnZip').hidden = false;
-      buildPreviewList();
     }
   }
+
+  // Generating a project you cannot look at is not a migration. Compile it, then let the
+  // operator through to Preview — which is the step that used to show a 404.
+  await compile(log);
+}
+
+async function compile(log) {
+  $('#buildLabel').textContent = 'Compiling the generated project…';
+  logLine(log, 'compiling — npm install (first run only) then next build');
+
+  let ok = false;
+  try {
+    const res = await post('/api/compile', { siteUrl: state.siteUrl });
+    for await (const ev of ndjson(res)) {
+      if (ev.type === 'stage') { $('#buildLabel').textContent = ev.label; logLine(log, ev.label); }
+      else if (ev.type === 'note') logLine(log, ev.text);
+      else if (ev.type === 'compiled') { ok = true; logLine(log, `static export ready — ${ev.pages} pages`, 'ok'); }
+      else if (ev.type === 'error') logLine(log, ev.message, 'no');
+    }
+  } catch (err) {
+    logLine(log, String(err.message ?? err), 'no');
+  }
+
+  $('#buildBar').style.width = '100%';
+  $('#buildLabel').textContent = ok ? 'Done — the export is built and previewable.' : 'Generated, but the build failed.';
+
+  if (ok) {
+    // Re-run the checks against the export that now exists; before it did, they could only
+    // report "not built yet".
+    try {
+      const verify = await (await post('/api/verify', { siteUrl: state.siteUrl })).json();
+      state.verify = verify;
+      renderVerify(verify);
+    } catch { /* the checks are a report, not a gate */ }
+
+    reach('preview');
+    $('#btnPreview').hidden = false;
+    $('#btnScore').hidden = false;
+    buildPreviewList();
+  }
+}
+
+
+/**
+ * Design fidelity and content fidelity, side by side and never averaged.
+ *
+ * Two bars rather than one number, because they answer different questions: a page can
+ * carry every word and still look wrong, and a blended figure hides whichever of those
+ * actually happened.
+ */
+async function score() {
+  const log = $('#buildLog');
+  const btn = $('#btnScore');
+  btn.disabled = true;
+  btn.textContent = 'Measuring…';
+  logLine(log, 'comparing every page against the live site at 375, 768 and 1440');
+
+  try {
+    const res = await post('/api/score', { siteUrl: state.siteUrl });
+    for await (const ev of ndjson(res)) {
+      if (ev.type === 'stage') { $('#buildLabel').textContent = ev.label; logLine(log, ev.label); }
+      else if (ev.type === 'progress') $('#buildLabel').textContent = `Scoring ${ev.done}/${ev.total} — ${ev.path} @ ${ev.width}px`;
+      else if (ev.type === 'score') { state.score = ev.score; renderScore(ev.score); }
+      else if (ev.type === 'smoke') {
+        state.smoke = ev.smoke;
+        for (const p of ev.smoke.pages ?? []) {
+          logLine(log, `${p.path} — ${p.scripts ? `${p.scripts.ran}/${p.scripts.total} scripts ran` : 'no scripts'}${p.reasons?.length ? ' · ' + p.reasons[0] : ''}`, p.pass ? 'ok' : 'wa');
+        }
+      } else if (ev.type === 'error') logLine(log, ev.message, 'no');
+    }
+    $('#buildLabel').textContent = 'Measured.';
+  } catch (err) {
+    logLine(log, String(err.message ?? err), 'no');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Measure against the original';
+  }
+}
+
+function renderScore(score) {
+  if (score?.skipped) {
+    $('#buildOut').insertAdjacentHTML('afterbegin',
+      `<div class="note note--warn"><p>Visual scoring needs a browser engine — run <code>npx playwright install chromium</code>.</p></div>`);
+    return;
+  }
+  const o = score.overall;
+  const pct = (v) => (v == null ? '—' : (v * 100).toFixed(1) + '%');
+  const tone = (v, pass) => (v == null ? 'muted' : v >= pass ? 'pass' : v >= pass - 0.07 ? 'warn' : 'fail');
+  const meter = (v, pass) =>
+    `<span class="smeter"><i><b style="width:${v == null ? 0 : Math.min(v, 1) * 100}%;background:var(--${tone(v, pass)})"></b></i><em>${pct(v)}</em></span>`;
+
+  const byPath = new Map();
+  for (const p of score.pages ?? []) if (p.width === 1440 || !byPath.has(p.path)) byPath.set(p.path, p);
+
+  const rows = [...byPath.values()].map((p) => `
+    <div class="srow">
+      <span class="spath" title="${esc(p.path)}">${esc(p.path)}</span>
+      ${p.error ? `<span class="fail">did not render</span><span></span>` : meter(p.visual, 0.92) + meter(p.text, 0.95)}
+    </div>`).join('');
+
+  $('#buildOut').insertAdjacentHTML('afterbegin', `
+    <div class="card" style="margin-bottom:16px">
+      <span class="eyebrow">How much of the site came across</span>
+      <div class="grid g3" style="margin:10px 0 14px">
+        <div class="stat"><b style="color:var(--${tone(o.visual, 0.92)})">${pct(o.visual)}</b><span>design fidelity</span></div>
+        <div class="stat"><b style="color:var(--${tone(o.text, 0.95)})">${pct(o.text)}</b><span>content fidelity</span></div>
+        <div class="stat"><b style="color:var(--${tone(o.nodes, 0.95)})">${pct(o.nodes)}</b><span>node coverage</span></div>
+      </div>
+      <div class="scores"><div class="srow"><span class="spath" style="color:var(--muted)">page</span><span style="color:var(--muted);font-size:.76rem">design</span><span style="color:var(--muted);font-size:.76rem">content</span></div>${rows}</div>
+      <p class="mode-help">Measured ${o.measured}/${o.total} page-widths at 375, 768 and 1440.
+      Video and CSS animation are frozen on both sides first — two independent playbacks never
+      share a frame, and scoring that would report video timing rather than migration quality.
+      Design and content fidelity are shown separately and never averaged.</p>
+    </div>`);
 }
 
 function renderVerify(v) {
@@ -538,8 +678,13 @@ npm install &amp;&amp; npm run build</pre>
 const pv = { orig: true, mig: true, widths: new Set([375, 768, 1440]) };
 
 function buildPreviewList() {
-  $('#pvPage').innerHTML = state.review
-    .map((p) => `<option value="${esc(p.path)}">${esc(p.path)} — ${esc(p.chosen)}</option>`).join('');
+  // Prefer what was actually built. The review step is optional — and skipped entirely in
+  // fidelity mode — so keying the preview off it left the picker empty on the exact path.
+  const source = state.routes?.length
+    ? state.routes.map((r) => ({ path: r.path, label: r.path }))
+    : state.review.map((p) => ({ path: p.path, label: `${p.path} — ${p.chosen}` }));
+  $('#pvPage').innerHTML = source
+    .map((p) => `<option value="${esc(p.path)}">${esc(p.label)}</option>`).join('');
   renderPreview();
 }
 
@@ -585,6 +730,21 @@ $('#btnZip').addEventListener('click', () => {
   window.location.href = `/api/zip?site=${encodeURIComponent(state.host)}`;
 });
 $('#btnBuild').addEventListener('click', build);
+$('#btnScore').addEventListener('click', score);
+
+function setMode(mode) {
+  state.mode = mode;
+  $('#modeFidelity').setAttribute('aria-pressed', String(mode === 'fidelity'));
+  $('#modeTemplate').setAttribute('aria-pressed', String(mode === 'template'));
+  $('#modeHelp').textContent = MODE_HELP[mode];
+  // Componentisation splits a captured page; there is nothing to split in template mode,
+  // where the sections are already separate components by construction.
+  $('#optComponentize').disabled = mode !== 'fidelity';
+}
+$('#modeFidelity').addEventListener('click', () => setMode('fidelity'));
+$('#modeTemplate').addEventListener('click', () => setMode('template'));
+$('#optComponentize').addEventListener('change', (e) => { state.componentize = e.target.checked; });
+$('#optLlm').addEventListener('change', (e) => { state.llm = e.target.checked; });
 $('#btnPreview').addEventListener('click', () => { goto('preview'); renderPreview(); });
 $('#pvPage').addEventListener('change', renderPreview);
 $('#pvOrig').addEventListener('click', (e) => {
@@ -599,6 +759,16 @@ $$('[data-w]').forEach((b) => b.addEventListener('click', () => {
   b.setAttribute('aria-pressed', String(pv.widths.has(w)));
   renderPreview();
 }));
+
+// Say plainly whether a model is configured. An unexplained disabled checkbox is worse
+// than no checkbox: the operator cannot tell a missing key from a broken feature.
+fetch('/api/llm').then((r) => r.json()).then((s) => {
+  const box = $('#optLlm');
+  const label = $('#llmState');
+  if (s.available) { label.textContent = `— ${s.model}`; return; }
+  box.disabled = true;
+  label.textContent = `— not configured (${s.reason}); rules will name them`;
+}).catch(() => {});
 
 state.current = 'source';
 renderSteps();

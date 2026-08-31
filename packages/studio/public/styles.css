@@ -259,6 +259,8 @@ td select { min-height: 32px; padding: 4px 8px; font-size: .8rem; min-width: 175
   background: var(--surface); color: var(--fg-2); border-right: 1px solid var(--line);
 }
 .seg button:last-child { border-right: 0; }
+/* 44px is the smallest reliable touch target; the desktop height was 34. */
+@media (pointer: coarse) { .seg button { min-height: 44px; } .mode-row .toggle { min-height: 44px; } .mode-row .toggle input { width: 20px; height: 20px; } }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
 .stage { display: flex; gap: 20px; overflow-x: auto; padding-bottom: 12px; align-items: flex-start; }
 .device { flex: none; }
@@ -285,8 +287,13 @@ td select { min-height: 32px; padding: 4px 8px; font-size: .8rem; min-width: 175
 /* --------------------------------------------------------------- responsive */
 @media (max-width: 900px) {
   .app { grid-template-columns: 1fr; }
+  /* A grid item defaults to min-width:auto, so it refuses to shrink below its content and
+     the `overflow-x: auto` below never gets a chance to scroll — the rail stretched to the
+     full width of the step list (736px at a 390px viewport) and took the whole page with
+     it. min-width:0 is what lets the overflow actually contain itself. */
+  .rail, main { min-width: 0; }
   .rail { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
-  .steps { grid-auto-flow: column; overflow-x: auto; grid-auto-columns: max-content; }
+  .steps { grid-auto-flow: column; overflow-x: auto; grid-auto-columns: max-content; min-width: 0; }
   .step .sub { display: none; }
   .rail-foot { display: none; }
   main { padding: 20px 16px 60px; }
@@ -325,3 +332,21 @@ td select { min-height: 32px; padding: 4px 8px; font-size: .8rem; min-width: 175
   font-family: var(--font-mono); font-size: .66rem; padding: 1px 7px; border-radius: 20px;
   background: var(--surface-3); color: var(--fg-2);
 }
+
+/* Build-mode chooser. The two modes are different products, not a quality slider, so the
+   help text under the control changes with the choice rather than trying to describe both. */
+.mode-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.mode-row .toggle { display: flex; align-items: center; gap: 9px; font-size: .84rem; color: var(--fg-2); cursor: pointer; }
+.mode-row .toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex: none; }
+.mode-row .toggle em { font-style: normal; color: var(--muted); }
+.mode-row .toggle:has(input:disabled) { cursor: default; opacity: .8; }
+.mode-help { margin: 10px 0 0; font-size: .82rem; line-height: 1.55; color: var(--muted); max-width: 74ch; }
+
+/* Two fidelity measurements, side by side and never averaged. */
+.scores { display: grid; gap: 10px; }
+.srow { display: grid; grid-template-columns: minmax(120px, 1fr) repeat(2, minmax(110px, 150px)); gap: 12px; align-items: center; font-size: .82rem; }
+.srow .spath { font-family: var(--font-mono); font-size: .78rem; color: var(--fg-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.smeter { display: flex; align-items: center; gap: 8px; }
+.smeter i { display: block; height: 6px; flex: 1; min-width: 44px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.smeter i > b { display: block; height: 100%; border-radius: 3px; }
+.smeter em { font-style: normal; font-variant-numeric: tabular-nums; color: var(--muted); font-size: .76rem; }

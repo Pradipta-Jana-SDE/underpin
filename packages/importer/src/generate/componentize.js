@@ -233,7 +233,121 @@ const isFooter = (n) =>
  * can open and edit — is delivered by the composition in page.jsx and the per-section
  * content JSON.
  */
-export function componentizePage(page) {
+/**
+ * How much of a page one section has to hold before it is worth opening up.
+ *
+ * Block themes wrap the entire site in a single `div.wp-site-blocks`, so a body-level
+ * split gives one component holding the header, the content and the footer — technically a
+ * decomposition, useless as one. Elementor pages need none of this: their body children
+ * already ARE the sections, which is why the descent is conditional rather than always on.
+ */
+const DOMINANT_SHARE = 0.6;
+const MIN_CHILDREN = 2;
+
+/**
+ * Splits a dominant section into a parent that renders its own wrapper element and child
+ * components inside it.
+ *
+ * The wrapper is kept and rendered by the parent — descending past it would delete an
+ * element that always rendered, which is the one thing decomposition may never do. Every
+ * child of the wrapper is accounted for, in order, including whitespace text nodes, so the
+ * DOM the browser builds is the same one it built before.
+ */
+function nestSection(node, id, depth, budget, unique) {
+  if (depth >= budget || !isEl(node)) return null;
+
+  const kids = node.c ?? [];
+  const elementKids = kids.filter(isEl);
+  if (elementKids.length < MIN_CHILDREN) return null;
+
+  const inner = splitSections({ t: node.t, a: node.a, c: kids });
+  if (inner.length < MIN_CHILDREN) return null;
+
+  // The children must be a faithful partition of what the wrapper actually held. If the
+  // split dropped or reordered anything, composing the parent from these pieces would
+  // render a different DOM — so decline to nest rather than nest incorrectly.
+  const flat = inner.flatMap((s) => s.nodes);
+  const expected = kids.filter((c) => isEl(c) || (typeof c === 'string' && c.trim()));
+  if (flat.length !== expected.length || flat.some((n, i) => n !== expected[i])) return null;
+
+  return inner.map((s, i) => {
+    const childNode = s.nodes.length === 1 ? s.nodes[0] : { t: 'underpin-fragment', a: {}, c: s.nodes };
+    const childId = `${id}_${String(i + 1).padStart(2, '0')}`;
+    const nested = s.nodes.length === 1 ? nestSection(s.nodes[0], childId, depth + 1, budget, unique) : null;
+    const content = hoistContent(childNode, childId);
+    return {
+      id: childId,
+      order: i + 1,
+      name: unique(chromeName(s.nodes[0], inner, i) ?? nameSection(s.nodes[0], i + 1)),
+      kind: s.kind,
+      itemCount: s.nodes.length,
+      tree: childNode,
+      children: nested,
+      content,
+      counts: { text: Object.keys(content.text).length, media: Object.keys(content.media).length }
+    };
+  });
+}
+
+/** Chrome naming, applied at whatever depth the header and footer actually live. */
+function chromeName(node, siblings, i) {
+  if (!isEl(node)) return null;
+  const totals = siblings.map((s) => Object.keys(hoistContent(s.nodes[0], 'x').text).length);
+  const total = totals.reduce((a, b) => a + b, 0) || 1;
+  const small = totals[i] / total < 0.25;
+  if (isHeader(node) && small) return 'SiteHeader';
+  if (isFooter(node) && small) return 'SiteFooter';
+  return null;
+}
+
+/**
+ * A compact description of one section, for a model to name.
+ *
+ * Deliberately small: tags, headings, a text sample and a few counts. The whole subtree
+ * would be tens of thousands of tokens per section and would not name it any better.
+ */
+export function describeSection(part) {
+  const node = part.tree;
+  const headings = [];
+  const collect = (n, depth = 0) => {
+    if (!isEl(n) || depth > 6) return;
+    if (/^h[1-4]$/.test(n.t)) headings.push(textOf(n).trim().slice(0, 80));
+    (n.c ?? []).forEach((c) => collect(c, depth + 1));
+  };
+  collect(node);
+  return {
+    id: part.id,
+    order: part.order,
+    tag: node.t,
+    classes: cls(node).slice(0, 120),
+    headings: headings.slice(0, 5),
+    text: textOf(node).trim().replace(/\s+/g, ' ').slice(0, 240),
+    images: countTag(node, 'img'),
+    links: countTag(node, 'a'),
+    forms: countTag(node, 'form')
+  };
+}
+
+/** Applies model-supplied names over the rule-derived ones, keeping uniqueness intact. */
+export function applyLlmNames(parts, names, unique) {
+  if (!names) return parts;
+  const walk = (list) => {
+    for (const part of list) {
+      const proposed = names[part.id];
+      // Chrome keeps its rule name: SiteHeader and SiteFooter are load-bearing for the
+      // shared-layout hoist, which matches on exactly those two strings.
+      if (proposed && part.name !== 'SiteHeader' && part.name !== 'SiteFooter') {
+        part.name = unique(proposed);
+        part.decidedBy = 'llm';
+      }
+      if (part.children) walk(part.children);
+    }
+  };
+  walk(parts);
+  return parts;
+}
+
+export function componentizePage(page, { nest = true, maxDepth = 3 } = {}) {
   const sections = splitSections(page.tree);
 
   // Header and footer are page chrome. A node matching the class pattern while holding
@@ -244,7 +358,24 @@ export function componentizePage(page) {
   const pageText = totals.reduce((a, b) => a + b, 0) || 1;
   const isChrome = (i) => totals[i] / pageText < 0.25;
 
-  return sections.map((s, i) => {
+  const used = new Map();
+  /**
+   * Uniqueness is page-wide, not per level: every component for a page lands in the same
+   * directory, so the same name at two depths overwrites one with the other and leaves
+   * Page.jsx importing a component that renders someone else's markup.
+   *
+   * Two chrome sections on one page — a desktop header and a mobile one, routine in
+   * Elementor and Divi — both name themselves SiteHeader. The second then overwrites the
+   * first on disk AND emits a duplicate import in Page.jsx, which is a hard build failure.
+   * Order-numbered names cannot collide, so this only ever fires on chrome.
+   */
+  const unique = (name) => {
+    const n = (used.get(name) ?? 0) + 1;
+    used.set(name, n);
+    return n === 1 ? name : `${name}${n}`;
+  };
+
+  const parts = sections.map((s, i) => {
     // A run of identical siblings is one section holding many items; wrap it so the
     // rendered DOM keeps every sibling exactly where it was.
     const node = s.nodes.length === 1
@@ -252,9 +383,18 @@ export function componentizePage(page) {
       : { t: 'underpin-fragment', a: {}, c: s.nodes };
 
     const primary = s.nodes[0];
-    const name = isHeader(primary) && isChrome(i) ? 'SiteHeader'
+    const name = unique(
+      isHeader(primary) && isChrome(i) ? 'SiteHeader'
       : isFooter(primary) && isChrome(i) ? 'SiteFooter'
-      : nameSection(primary, s.order);
+      : nameSection(primary, s.order)
+    );
+
+    // A section holding most of the page is a wrapper, not a section. Open it up so the
+    // export is a real component tree rather than one file with the whole site in it.
+    const dominant = totals[i] / pageText >= DOMINANT_SHARE;
+    const children = nest && dominant && s.nodes.length === 1
+      ? nestSection(s.nodes[0], s.id, 1, maxDepth, unique)
+      : null;
 
     const content = hoistContent(node, s.id);
     return {
@@ -264,11 +404,17 @@ export function componentizePage(page) {
       kind: s.kind,
       itemCount: s.nodes.length,
       tree: node,
+      children,
       content,
+      decidedBy: 'rule',
       counts: {
         text: Object.keys(content.text).length,
         media: Object.keys(content.media).length
       }
     };
   });
+
+  // Exposed so a caller that has a model can rename without re-deriving uniqueness.
+  Object.defineProperty(parts, 'unique', { value: unique, enumerable: false });
+  return parts;
 }

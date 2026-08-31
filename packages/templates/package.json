@@ -11,6 +11,7 @@
     "./styles.css": "./src/styles.css",
     "./theme": "./src/theme.js",
     "./DomTree": "./src/DomTree.jsx",
+    "./dom-tables": "./src/dom-tables.js",
     "./splice": "./src/splice.js"
   },
   "dependencies": {

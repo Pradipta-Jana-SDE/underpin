@@ -10,6 +10,7 @@
  * spinner that tells the operator nothing.
  */
 import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, extname, resolve, dirname, normalize } from 'node:path';
@@ -23,9 +24,14 @@ import { extractSite, extractionStats } from '@underpin/importer/src/extract/ind
 import { classifyAll, groupUrlsByType } from '@underpin/importer/src/classify/index.js';
 import { matchAll, rankTemplates, mapToTemplate } from '@underpin/importer/src/match/index.js';
 import { generateSite } from '@underpin/importer/src/generate/index.js';
+import { generateFidelitySite } from '@underpin/importer/src/generate/fidelity.js';
 import { writeReport } from '@underpin/importer/src/report/index.js';
+import { writeFidelityReport } from '@underpin/importer/src/report/fidelity.js';
 import { reuseMatrix } from '@underpin/importer/src/report/reuse.js';
 import { verifyBuild } from '@underpin/importer/src/verify/index.js';
+import { scorePages } from '@underpin/importer/src/verify/score.js';
+import { smokeCheck } from '@underpin/importer/src/verify/animation.js';
+import { createLlm } from '@underpin/importer/src/llm/index.js';
 import { MigrationPlan } from '@underpin/schema';
 import { TEMPLATES } from '@underpin/templates/manifests';
 
@@ -272,9 +278,16 @@ async function handleZip(req, res, url) {
   // zip that path leads nowhere. Vendoring just the template package is not enough — it
   // depends on @underpin/schema and @underpin/vocabulary in turn, and npm goes to the
   // registry for anything it cannot find on disk, which 404s.
+  //
+  // Fidelity exports need none of that: they copy the two runtime files they use into
+  // components/runtime/ and depend on nothing but next and react. Whether to vendor is
+  // read from the generated package.json rather than from the build mode, so the zip is
+  // correct for whatever is actually on disk.
   const WORKSPACE = ['templates', 'schema', 'vocabulary'];
   const vendorName = (n) => `underpin-${n}`;
-  const vendored = WORKSPACE
+  const sitePkg = readJson(join(dir, 'package.json'), {});
+  const needsVendor = Object.keys(sitePkg.dependencies ?? {}).some((d) => d.startsWith('@underpin/'));
+  const vendored = !needsVendor ? [] : WORKSPACE
     .map((n) => ({ name: n, dir: resolve(ROOT, 'packages', n) }))
     .filter((w) => existsSync(w.dir));
 
@@ -293,7 +306,7 @@ async function handleZip(req, res, url) {
     return JSON.stringify(pkg, null, 2) + '\n';
   };
 
-  const rewrite = { 'package.json': (t) => repoint(t, 0) };
+  const rewrite = needsVendor ? { 'package.json': (t) => repoint(t, 0) } : {};
   for (const w of vendored) {
     rewrite[`vendor/${vendorName(w.name)}/package.json`] = (t) => repoint(t, 1);
   }
@@ -406,37 +419,174 @@ async function handleSetTemplate(req, res) {
   });
 }
 
-/** Stages 7-9: generate, report, verify. */
+/**
+ * Stages 7-9: generate, report, verify.
+ *
+ * Fidelity is the default because it is what the operator asked for by opening this tool:
+ * the same site, in React, without WordPress. Template mode is the other product — it
+ * trades exactness for a reusable component library — and it stays one click away rather
+ * than being the thing you get by accident. For a long time this handler could only run
+ * template mode, so the studio quietly shipped the ~50%-match output while the exact path
+ * existed behind a CLI flag nobody clicking through a wizard would ever find.
+ */
 async function handleBuild(req, res) {
-  const { siteUrl } = await body(req);
+  const { siteUrl, mode = 'fidelity', componentize = true, mediaLimit = null, virgin = true, llm = false } = await body(req);
   const out = dirFor(siteUrl);
   const plan = readJson(join(out, 'migration.plan.json'));
   const siteIr = readJson(join(out, 'site.ir.json'));
   const pages = readJson(join(out, 'ir', 'pages.json'), []);
   const matches = readJson(join(out, 'template-plan.json'), []);
-  if (!plan || !siteIr) return json(res, 400, { error: 'Nothing to build yet.' });
 
+  if (!plan) return json(res, 400, { error: 'Nothing to build yet — run discovery and scope first.' });
+  // Fidelity captures live pages and never reads the IR, so it needs only the plan.
+  if (mode !== 'fidelity' && !siteIr) return json(res, 400, { error: 'Run extraction first, or switch to fidelity mode.' });
+
+  const fidelity = mode === 'fidelity';
   const s = stream(res);
   try {
-    s.send({ type: 'stage', stage: 'generate', label: 'Generating the React site and re-hosting media' });
-    const result = await generateSite({
-      outDir: join(out, 'site'), siteIr, pages, plan, matches,
-      onProgress: (phase, n) => s.send({ type: 'note', text: `re-hosting ${n} media files` })
+    s.send({
+      type: 'stage',
+      stage: 'generate',
+      label: fidelity
+        ? 'Rendering each page in a real browser and re-hosting its assets'
+        : 'Generating the React site and re-hosting media'
     });
+
+    const result = fidelity
+      ? await generateFidelitySite({
+          outDir: join(out, 'site'), siteUrl, plan, mediaLimit, componentize, virgin,
+          llm: createLlm({ enabled: llm }),
+          onProgress: (ev) => s.send(ev)
+        })
+      : await generateSite({
+          outDir: join(out, 'site'), siteIr, pages, plan, matches, mediaLimit,
+          onProgress: (phase, n) => s.send({ type: 'note', text: `re-hosting ${n} media files` })
+        });
+
     writeJson(join(out, 'generate-result.json'), result);
-    s.send({ type: 'generated', routes: result.routes.length, media: result.media, config: result.config });
+    s.send({
+      type: 'generated',
+      routes: result.routes.length,
+      routeList: result.routes.map((r) => ({ path: r.path, url: r.url })),
+      media: result.media,
+      config: result.config,
+      mode: result.mode ?? 'template',
+      parity: result.parity ?? null
+    });
 
     s.send({ type: 'stage', stage: 'report', label: 'Writing the migration report' });
-    await writeReport(out, siteUrl);
+    await (fidelity ? writeFidelityReport(out, siteUrl) : writeReport(out, siteUrl));
     const report = readJson(join(out, '_migration', 'report.json'), { counts: {}, rows: [] });
     s.send({ type: 'report', counts: report.counts, rows: report.rows });
 
     s.send({ type: 'stage', stage: 'verify', label: 'Checking the export against the acceptance criteria' });
-    const verify = verifyBuild({ outDir: out, siteUrl, routes: result.routes });
+    const verify = verifyBuild({ outDir: out, siteUrl, routes: result.routes, generated: result });
     writeJson(join(out, '_migration', 'verify.json'), verify);
     s.send({ type: 'verify', verify });
 
     s.send({ type: 'done', host: hostOf(siteUrl) });
+  } catch (err) {
+    s.send({ type: 'error', message: String(err?.message ?? err) });
+  }
+  s.end();
+}
+
+
+/**
+ * Stage 7b: actually compile the generated project.
+ *
+ * The studio used to generate a Next.js app and then tell the operator to go and run
+ * `npm install && npm run build` themselves — so the Preview step, one click later, had
+ * nothing to show and rendered a 404 or, worse, fell through to whatever the previous
+ * project had left on disk. Generating something you cannot look at is not a migration
+ * tool. This runs the install and the build and streams their output, so Preview means
+ * preview.
+ */
+async function handleCompile(req, res) {
+  const { siteUrl } = await body(req);
+  const dir = join(dirFor(siteUrl), 'site');
+  if (!existsSync(join(dir, 'package.json'))) return json(res, 400, { error: 'Generate the site first.' });
+
+  const s = stream(res);
+  const run = (cmd, args, label) =>
+    new Promise((resolve) => {
+      s.send({ type: 'stage', stage: 'compile', label });
+      const child = spawn(cmd, args, { cwd: dir, env: { ...process.env, NO_COLOR: '1', CI: '1' } });
+      const push = (buf) => {
+        for (const line of String(buf).split('\n')) {
+          const t = line.trim();
+          // npm and next are chatty; the interesting lines are progress and failure.
+          if (t && !/^npm (notice|warn)/i.test(t)) s.send({ type: 'note', text: t.slice(0, 200) });
+        }
+      };
+      child.stdout.on('data', push);
+      child.stderr.on('data', push);
+      child.on('error', (e) => resolve({ code: 1, error: String(e?.message ?? e) }));
+      child.on('close', (code) => resolve({ code }));
+    });
+
+  try {
+    // Dependencies are the same three every time, so this is skipped once they are there.
+    if (!existsSync(join(dir, 'node_modules'))) {
+      const install = await run('npm', ['install', '--no-audit', '--no-fund'], 'Installing next and react');
+      if (install.code !== 0) {
+        s.send({ type: 'error', message: `npm install failed (${install.error ?? 'exit ' + install.code})` });
+        return s.end();
+      }
+    }
+
+    const build = await run('npm', ['run', 'build'], 'Building the static export');
+    if (build.code !== 0) {
+      s.send({ type: 'error', message: 'next build failed — see the log above' });
+      return s.end();
+    }
+
+    const pages = existsSync(join(dir, 'out'))
+      ? (await readdir(join(dir, 'out'), { recursive: true })).filter((f) => String(f).endsWith('.html')).length
+      : 0;
+    s.send({ type: 'compiled', pages });
+    s.send({ type: 'done', host: hostOf(siteUrl) });
+  } catch (err) {
+    s.send({ type: 'error', message: String(err?.message ?? err) });
+  }
+  s.end();
+}
+
+
+/**
+ * Stage 10: measure the built export against the live original.
+ *
+ * Served through this server's own preview route, so what is measured is exactly what the
+ * operator sees in the next step — not a separate build they would have to start by hand.
+ */
+async function handleScore(req, res) {
+  const { siteUrl } = await body(req);
+  const out = dirFor(siteUrl);
+  const gen = readJson(join(out, 'generate-result.json'));
+  if (!gen) return json(res, 400, { error: 'Build the site first.' });
+  if (!existsSync(join(out, 'site', 'out'))) return json(res, 400, { error: 'Compile the site first.' });
+
+  const paths = gen.routes.map((r) => r.path);
+  const base = `http://localhost:${PORT}/preview/${hostOf(siteUrl)}`;
+  const s = stream(res);
+  try {
+    s.send({ type: 'stage', label: `Comparing ${paths.length} pages against the live site` });
+    const score = await scorePages({
+      origin: new URL(siteUrl).origin,
+      migratedBase: base,
+      paths,
+      outDir: out,
+      onProgress: (p) => s.send({ type: 'progress', ...p })
+    });
+    s.send({ type: 'score', score });
+
+    s.send({ type: 'stage', label: 'Checking the migrated pages still run' });
+    const smoke = await smokeCheck({ migratedBase: base, paths });
+    writeJson(join(out, '_migration', 'smoke.json'), smoke);
+    s.send({ type: 'smoke', smoke });
+
+    await writeFidelityReport(out, siteUrl);
+    s.send({ type: 'done' });
   } catch (err) {
     s.send({ type: 'error', message: String(err?.message ?? err) });
   }
@@ -448,14 +598,34 @@ async function handleVerify(req, res) {
   const out = dirFor(siteUrl);
   const gen = readJson(join(out, 'generate-result.json'));
   if (!gen) return json(res, 400, { error: 'Build the site first.' });
-  const verify = verifyBuild({ outDir: out, siteUrl, routes: gen.routes });
+  const verify = verifyBuild({ outDir: out, siteUrl, routes: gen.routes, generated: gen });
   writeJson(join(out, '_migration', 'verify.json'), verify);
   json(res, 200, verify);
 }
 
 /* ------------------------------------------------------------ static files */
 
-async function serveFile(res, filePath, fallbackIndex = false) {
+/**
+ * Scopes a preview's NAVIGATION to its own project — and deliberately nothing else.
+ *
+ * Clicking a link in the preview must not escape to another project's export, so `<a href>`
+ * is rewritten. Asset URLs are left exactly as the build wrote them, and that restraint is
+ * load-bearing: React dedupes hoisted stylesheets by href, so rewriting `<link href>` in
+ * the served HTML while the client re-inserted the original path from its own payload
+ * produced two copies of every sheet — twelve where the build emitted seven — and the
+ * changed cascade order cost seven points of visual fidelity at mobile. Measured; the
+ * export itself scored 100% the whole time.
+ *
+ * Assets instead resolve by Referer, and by the cookie set below for the ones a stylesheet
+ * requests (whose Referer is the stylesheet, not the page).
+ */
+function scopeToPreview(body, host, type) {
+  if (!type.startsWith('text/html')) return body;
+  const p = `/preview/${host}/`;
+  return body.replace(/<a\b[^>]*?\bhref=(["'])\/(?!\/|preview\/)/g, (m, q) => m.slice(0, m.length - 1) + p);
+}
+
+async function serveFile(res, filePath, fallbackIndex = false, previewHost = null) {
   try {
     let p = filePath;
     let st = await stat(p).catch(() => null);
@@ -464,11 +634,20 @@ async function serveFile(res, filePath, fallbackIndex = false) {
       st = await stat(p).catch(() => null);
     }
     if (!st || !st.isFile()) return false;
-    const buf = await readFile(p);
+
+    const type = MIME[extname(p).toLowerCase()] ?? 'application/octet-stream';
+    let buf = await readFile(p);
+    if (previewHost && /^text\/(html|css)/.test(type)) {
+      buf = Buffer.from(scopeToPreview(buf.toString('utf8'), previewHost, type), 'utf8');
+    }
+
     res.writeHead(200, {
-      'content-type': MIME[extname(p).toLowerCase()] ?? 'application/octet-stream',
+      'content-type': type,
       'content-length': buf.length,
-      'cache-control': 'no-store'
+      'cache-control': 'no-store',
+      // Names the site for any request the rewrite could not reach (a URL built by a
+      // script at runtime). Scoped to /preview so it never leaks into the studio itself.
+      ...(previewHost ? { 'set-cookie': `underpin_preview=${encodeURIComponent(previewHost)}; Path=/; SameSite=Lax` } : {})
     });
     res.end(buf);
     return true;
@@ -492,11 +671,18 @@ const server = createServer(async (req, res) => {
       if (path === '/api/migrate') return handleMigrate(req, res);
       if (path === '/api/template') return handleSetTemplate(req, res);
       if (path === '/api/build') return handleBuild(req, res);
+      if (path === '/api/compile') return handleCompile(req, res);
+      if (path === '/api/score') return handleScore(req, res);
       if (path === '/api/verify') return handleVerify(req, res);
     }
 
     if (path === '/api/zip') return handleZip(req, res, url);
     if (path === '/api/sites') return json(res, 200, await listSites());
+    if (path === '/api/llm') {
+      // Whether a model COULD be used, not whether it will be — the checkbox decides that.
+      const probe = createLlm({ enabled: true });
+      return json(res, 200, { available: probe.available, model: probe.model ?? null, reason: probe.reason ?? null });
+    }
     if (path === '/api/reuse') return json(res, 200, reuseMatrix(SITES));
     if (path === '/api/templates') {
       return json(res, 200, TEMPLATES.map((t) => ({
@@ -516,7 +702,7 @@ const server = createServer(async (req, res) => {
       // Contain traversal: the resolved path must stay inside the export.
       const target = normalize(join(base, inner));
       if (!target.startsWith(base)) return json(res, 403, { error: 'forbidden' });
-      if (await serveFile(res, target, true)) return;
+      if (await serveFile(res, target, true, host)) return;
       res.writeHead(404, { 'content-type': 'text/plain' });
       return res.end('Not built yet — run Build in the studio first.');
     }
@@ -526,28 +712,22 @@ const server = createServer(async (req, res) => {
     // requests back to the right export using the Referer of the iframe that asked.
     if (/^\/(media|assets|_next|favicon)/.test(path)) {
       const ref = req.headers.referer ?? '';
-      const m = /\/preview\/([^/]+)/.exec(ref);
+      const fromRef = /\/preview\/([^/]+)/.exec(ref)?.[1];
+      const fromCookie = /(?:^|;\s*)underpin_preview=([^;]+)/.exec(req.headers.cookie ?? '')?.[1];
 
       const tryHost = async (host) => {
-        const base = join(SITES, host, 'site', 'out');
+        if (!host) return false;
+        const base = join(SITES, decodeURIComponent(host), 'site', 'out');
         const target = normalize(join(base, path));
         return target.startsWith(base) && (await serveFile(res, target));
       };
 
-      if (m && (await tryHost(m[1]))) return;
-
-      // A font or image referenced from inside a stylesheet sends the STYLESHEET as its
-      // Referer, not the page, so the /preview/<host>/ hint is absent exactly when a
-      // fidelity capture needs it most. Asset filenames are content hashes, so scanning
-      // the exports for the name is unambiguous — two sites sharing a name share the
-      // bytes. This is a preview-server concern only; a deployed site serves from its
-      // own root and never hits this path.
-      if (existsSync(SITES)) {
-        for (const host of await readdir(SITES)) {
-          if (m && host === m[1]) continue;
-          if (await tryHost(host)) return;
-        }
-      }
+      // The Referer first, then the cookie the preview set. Never another site: serving
+      // one project's stylesheet to another project's preview is how a migrated page ended
+      // up wearing the previous project's navigation, and a 404 is far easier to diagnose
+      // than a page that is subtly the wrong site.
+      if (await tryHost(fromRef)) return;
+      if (await tryHost(fromCookie)) return;
     }
 
     // Reports written to disk by the report stage.

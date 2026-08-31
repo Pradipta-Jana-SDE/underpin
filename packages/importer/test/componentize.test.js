@@ -67,7 +67,24 @@ test('section naming is deterministic and filename-safe', () => {
 });
 
 // ------------------------------------------------- against real captured data
-const CAPTURE = new URL('../../../sites/elementor-fidelity/site/content/pages/index.json', import.meta.url);
+//
+// A committed fixture rather than a path into sites/. The three tests below are the ones
+// that assert decomposition never loses a node, and for most of this project's life they
+// silently skipped because the capture they pointed at was gitignored and absent. A test
+// that cannot run is not a test.
+//
+// Regenerate after a change to capture/:
+//   node packages/importer/bin/underpin.js build https://elementor.com --mode fidelity --limit 1
+//   then slim sites/elementor.com/site/content/pages/index.json to
+//   {path,url,title,lang,bodyClass,htmlClass,tree} — sheets and scripts are megabytes and
+//   nothing here reads them.
+const CAPTURE = new URL('./fixtures/captured-elementor-home.json', import.meta.url);
+
+test('the capture fixture is committed', () => {
+  // Unconditional on purpose: without it, deleting the fixture turns three real tests into
+  // three silent skips and the suite still reports green.
+  assert.ok(existsSync(CAPTURE), 'missing packages/importer/test/fixtures/captured-elementor-home.json');
+});
 
 test('round-trips a real captured page without changing a single node', { skip: !existsSync(CAPTURE) }, () => {
   const page = JSON.parse(readFileSync(CAPTURE, 'utf8'));

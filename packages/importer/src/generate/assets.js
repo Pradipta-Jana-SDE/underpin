@@ -23,6 +23,34 @@ function extFor(url, kind) {
  * page's. Rewriting them against the page silently breaks every background image and
  * @font-face on a site whose CSS lives in a subdirectory — which is most of them.
  */
+
+/**
+ * Fetch with backoff on rate limiting.
+ *
+ * Measured on elementor.com: mirroring a whole site issues thousands of asset requests,
+ * and at six in flight the origin starts answering 429 — 851 of 852 failures on one run,
+ * which is 851 missing images in the delivered site. A 429 is the server asking for a
+ * pause, not a missing file, and treating it as a failure turns a polite request into a
+ * visibly broken migration.
+ *
+ * Retry-After is honoured when the server sends it; otherwise the wait doubles, with a
+ * little jitter so parallel workers do not all come back at the same instant.
+ */
+const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
+
+async function fetchPolitely(url, { attempts = 4, headers } = {}) {
+  let wait = 700;
+  for (let i = 0; ; i++) {
+    const res = await fetch(url, { headers });
+    if (res.ok || !RETRY_STATUS.has(res.status) || i >= attempts - 1) return res;
+
+    const after = Number(res.headers.get('retry-after'));
+    const pause = Number.isFinite(after) && after > 0 ? Math.min(after * 1000, 15000) : wait;
+    await new Promise((r) => setTimeout(r, pause + Math.random() * 250));
+    wait = Math.min(wait * 2, 8000);
+  }
+}
+
 export async function mirrorAssets(assets, outDir, { origin, onProgress } = {}) {
   const dir = join(outDir, 'public', 'assets');
   mkdirSync(dir, { recursive: true });
@@ -39,7 +67,7 @@ export async function mirrorAssets(assets, outDir, { origin, onProgress } = {}) 
     assets,
     async (a) => {
       try {
-        const res = await fetch(a.url, {
+        const res = await fetchPolitely(a.url, {
           headers: { 'user-agent': process.env.UNDERPIN_USER_AGENT ?? 'UnderpinBot/0.1' }
         });
         if (!res.ok) { failures.push({ url: a.url, status: res.status }); return null; }
@@ -53,7 +81,7 @@ export async function mirrorAssets(assets, outDir, { origin, onProgress } = {}) 
         return null;
       }
     },
-    6
+    4
   );
 
   const ok = fetched.filter(Boolean);
@@ -80,7 +108,7 @@ export async function mirrorAssets(assets, outDir, { origin, onProgress } = {}) 
     extraQueue,
     async (a) => {
       try {
-        const res = await fetch(a.url, { headers: { 'user-agent': 'UnderpinBot/0.1' } });
+        const res = await fetchPolitely(a.url, { headers: { 'user-agent': 'UnderpinBot/0.1' } });
         if (!res.ok) { failures.push({ url: a.url, status: res.status }); return null; }
         const buf = Buffer.from(await res.arrayBuffer());
         const name = nameFor(a.url, a.kind);

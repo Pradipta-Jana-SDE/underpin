@@ -1,181 +1,255 @@
 # Underpin
 
-Template-driven WordPress → React migration. Lifts content, brand, URLs and SEO off a
-WordPress site onto reusable React templates — detecting what the site actually runs,
-then asking a human what to keep.
+**Point it at a website. Pick the pages you want. Get a real Next.js project back** — the
+same page, split into editable React components, with its own stylesheets, images and
+animations intact and nothing calling the old site at runtime.
 
-## Running it
+Built for WordPress migrations, and it works on any server-rendered site.
+
+---
+
+## Quick start
+
+```bash
+git clone <this repo>
+cd underpin
+npm install
+npx playwright install chromium     # the capture runs in a real browser
+npm run studio                      # → http://localhost:4400
+```
+
+Open <http://localhost:4400>, paste a site URL, and work through the seven steps. The
+Build step installs and compiles the generated project for you, so **Preview shows the
+real thing** — not a placeholder.
 
 Needs **Node 20+** (built on 22). No API key, no database, no Docker.
 
-```bash
-npm install
+---
+
+## What you get
+
+A standalone Next.js 15 app that depends on **`next`, `react` and `react-dom` and nothing
+else**:
+
+```
+sites/<host>/site/
+├── app/
+│   ├── layout.jsx                     shared header/footer when identical across pages
+│   └── [[...slug]]/page.jsx           one route for every migrated page
+├── components/
+│   ├── pages/<page>/Page.jsx          composes that page's sections, in order
+│   ├── pages/<page>/SiteHeader.jsx    ← readable JSX you can edit
+│   ├── pages/<page>/*.content.js      ← its text and images, safe to edit
+│   └── runtime/                       the small script-replay helper, copied in
+├── content/                           the captured page data
+├── public/assets/                     every stylesheet, script, font and image, re-hosted
+└── out/                               the static export (after build)
 ```
 
-### 1. The studio (recommended)
+A generated component is source you open and edit, not a JSON blob:
 
-```bash
-npm run studio          # → http://localhost:4400
+```jsx
+import content from './Section02Pricing.content.js';
+
+export default function Section02Pricing() {
+  return (
+    <section className="pricing-band" data-section="pricing">
+      <h2>{content.heading}</h2>
+      <img src={content.imageSrc} alt={content.imageAlt} />
+    </section>
+  );
+}
 ```
 
-Open that URL and work through seven steps: enter a site → review what the crawler
-found → answer the scope questions → **pick which pages you want** → review each page's
-template → build and verify → preview side by side. The build step has a
-**Download codebase (.zip)** button.
+Its words and images live beside it in `Section02Pricing.content.js`, so a copy change
+never means touching markup.
 
-### 2. Or the CLI, if you prefer it headless
+---
 
-```bash
-npm run migrate -- https://example.com --yes --limit 12
-```
+## The seven steps
 
-`--yes` takes the recommended answer to every scope question instead of prompting.
-`--limit` samples that many pages, spread across URL shapes; drop it to migrate
-everything. Individual stages run on their own too:
+| # | Step | What happens |
+|---|---|---|
+| 1 | **Source** | Enter a URL. Nothing is crawled yet. |
+| 2 | **Findings** | The discovery chain and what the site actually runs — evidence, not assumptions. |
+| 3 | **Scope** | The decisions the tool will not make for you. Excluded URLs get a routing policy, never a bare 404. |
+| 4 | **Pages** | Tick the pages to migrate. **Only ticked pages are ever crawled.** |
+| 5 | **Review** | Confirm what was found. |
+| 6 | **Build** | Capture → emit components → **install and compile** → run the acceptance checks. |
+| 7 | **Preview** | The original and the migration side by side at 375, 768 and 1440. |
 
-```bash
-npm run underpin -- discover https://example.com   # just the discovery evidence
-npm run underpin -- scope    https://example.com   # capability questions, interactive
-npm run underpin -- verify   https://example.com   # acceptance checks on a built export
-npm run reuse                                      # which templates work across sites
-```
+The Build step also has **Measure against the original** — a pixel, text and node
+comparison of every built page against the live site, plus a check that the migrated
+pages' own scripts actually still run.
 
-### 3. Build the migrated site
+---
 
-The generator writes a Next.js project; it does not install or build it for you.
+## Two modes
 
-```bash
-cd sites/example.com/site
-npm install
-npm run build           # static export → ./out
-npx serve out           # view it
-```
+Chosen on the Build step. They answer different questions.
 
-The downloaded zip is the same thing with the workspace packages vendored in, so it
-installs and builds anywhere — no monorepo required.
+| | **Exact copy** (default) | **Reusable templates** |
+|---|---|---|
+| What you get | The page verbatim, split into named JSX components | The page rebuilt from a 15-component library |
+| Fidelity | 100% at the capture width; 97–100% at other breakpoints | Visibly tidier than the original, not identical |
+| Shared between sites | Nothing | The whole component library |
+| Use when | The migration is a lift-and-shift | The migration is a redesign |
 
-### 4. Checking the result
+---
 
-```bash
-npm run underpin -- verify https://example.com     # 6 mechanical acceptance checks
-npm run score -- https://example.com http://localhost:4400/preview/example.com /
-```
-
-`score` compares the migrated page against the live original — visual, text and node
-coverage at 375/768/1440.
-
-### Fidelity mode (exact reproduction)
-
-Needs a browser engine, once:
+## Or drive it from the CLI
 
 ```bash
-npx playwright install chromium
-npm run underpin -- build https://example.com --mode fidelity --limit 5
+# everything, headless
+npm run migrate -- https://example.com --yes --componentize
+
+# or one stage at a time
+npm run underpin -- discover https://example.com
+npm run underpin -- scope    https://example.com
+npm run underpin -- build    https://example.com --mode fidelity --componentize
+npm run underpin -- verify   https://example.com
+npm run underpin -- measure  https://example.com --base http://localhost:3000
 ```
 
-Renders each page in a real browser and keeps its own CSS and animation scripts.
-Static pages come out ~99.8% pixel-identical. See the trade-off note below.
+| Flag | Effect |
+|---|---|
+| `--yes` | Take the recommended answer to every scope question |
+| `--componentize` | Split each page into per-section components |
+| `--limit <n>` | Sample n pages, spread across URL shapes |
+| `--mode template` | Rebuild from the shared component library instead |
+| `--no-virgin` | Capture after the scroll pass (use if a reveal animation leaves content invisible) |
+| `--llm` | Let a model name the components (optional, see below) |
 
-### Common problems
+Build the export yourself with `cd sites/<host>/site && npm install && npm run build`.
+
+---
+
+## How it is verified
+
+`npm test` — **145 tests, none skipped.**
+
+Every acceptance check reads the built export rather than asserting something in a README:
+
+```
+OK  Every planned URL exists in the export
+OK  No asset still loads from the source origin
+OK  Every page has a non-empty title
+OK  Canonical links carried across
+OK  sitemap.xml and robots.txt generated
+OK  Nothing loads from wp-admin / wp-login / xmlrpc / wp-json
+OK  Every section emitted as editable JSX
+```
+
+The last one is the load-bearing check. Every generated component is **re-parsed and
+compared against the DOM it came from**. A section whose JSX does not round-trip falls
+back to a runtime renderer — per section, reported, never silent — so a codegen bug can
+cost you an ugly file but never a page that renders differently.
+
+Measured across **1,062 sections from 69 real captured pages on 5 different sites: zero
+parity failures.**
+
+`measure` then loads the built pages in a browser and reports:
+
+```
+demos.kadencewp.com  (WordPress)   design 100.0%   content 100.0%   nodes 100.0%   6/6 widths
+goranggosolutions.com (Next.js)    design  99.3%   content 100.0%   nodes 100.0%  18/18 widths
+```
+
+Both also pass the animation smoke check — every migrated page's scripts boot, with no
+console errors and no failed requests.
+
+**Design and content fidelity are reported separately and never averaged.** They answer
+different questions, and a blended number hides whichever one actually went wrong.
+
+---
+
+## Optional: let a model name the components
+
+Entirely optional and off unless you ask for it.
+
+```bash
+cp .env.example .env      # set LLM_PROVIDER=anthropic and LLM_API_KEY
+npm run underpin -- build https://example.com --mode fidelity --componentize --llm
+```
+
+It renames components and nothing else — naming cannot change the DOM, so the worst it
+can do is pick a duller filename. With no key the rules name everything and the migration
+is byte-for-byte identical; there is a test that asserts exactly that.
+
+---
+
+## Honest limits
+
+Worth knowing before you demo it.
+
+- **The capture is taken at 1440px.** A site that builds *different markup* at mobile from
+  JavaScript will differ there — measured at 97–99% on such pages, against 100% at 1440.
+  Nothing is missing; the original simply renders a different menu. Server-rendered sites,
+  which respond to breakpoints with CSS, score 100% at every width.
+- **A source site that is itself a React/Next/Nuxt app** cannot have its own runtime
+  replayed inside the migrated app — two hydration frameworks fight over the same DOM and
+  both break. Its runtime is dropped and reported. Navigation menus are recovered anyway:
+  capture opens each one, ships the panel hidden, and reveals it with CSS on hover and
+  keyboard focus — so a dropdown that only existed while the source's React ran still
+  works. Other framework-driven widgets stay inert. Server-rendered sites — WordPress
+  included — replay their scripts fine: measured 56/56 and 69/69 running on real pages.
+- **Anything personalised, A/B tested or fed from a live API** was captured once. It is a
+  snapshot, and calling it one is the honest description.
+- **Third-party embeds** are preserved verbatim; keys referrer-locked to the old domain
+  need re-scoping before they render.
+- **An asset that was already broken on the source** is reproduced exactly as broken, and
+  graded a warning that says so rather than a failure.
+
+---
+
+## Troubleshooting
 
 | Symptom | Cause |
 |---|---|
-| `EADDRINUSE` on 4400 | Studio already running. `PORT=4500 npm run studio` |
-| Fidelity build fails on `chromium` | Run `npx playwright install chromium` |
-| Studio preview shows an unstyled page | The site was generated but not built — run `npm run build` inside `sites/<host>/site` |
-| Crawl finds 0 URLs | Site has no reachable sitemap and blocked the link-crawl fallback; check `sites/<host>/discovery.json` for the chain |
+| `EADDRINUSE` on 4400 | Studio already running — `PORT=4500 npm run studio` |
+| Build fails on `chromium` | `npx playwright install chromium` |
+| Preview is empty | The compile step failed — the log on the Build step says why |
+| A section never reveals itself | Its animation library did not survive capture; rebuild with `--no-virgin` |
+| Lots of `429` in the asset log | The source is rate limiting. The mirror backs off and retries; a very large site may still lose a few |
+| Crawl finds 0 URLs | No reachable sitemap and the link-crawl fallback was blocked — see `sites/<host>/discovery.json` |
 
-## What works
+---
 
-**A web studio over the whole pipeline** (`npm run studio`) — enter a URL, review what
-the crawler found, answer the scope questions, review every page's extracted structure
-and change its template, then build, verify and preview side by side. Long stages stream
-real progress rather than showing a spinner.
-
-The pipeline underneath, end to end:
+## How it works
 
 ```
-01 Discover     sitemap chain + REST probe
-02 Fingerprint  what the site DOES, not just what it has
-03 Scope        negotiate dispositions, write the contract
-04 Extract      four-rung ladder → normalised section IR
-05 Classify     page type, cost ladder, no API key needed
-06 Match        template scoring with an explainable breakdown
-07 Generate     Next.js static export, media re-hosted
-08 Report       per-page pass/warn/fail + responsive preview
-09 Verify       mechanical acceptance checks against the built export
+discover → fingerprint → scope → [pick pages] → capture → componentize → emit → compile → verify → measure
 ```
 
-### Proven on two unrelated live sites
+- **discover** — robots.txt, then the sitemap chain, then a link crawl. Measured against
+  real sites: no single sitemap path wins on more than two of three.
+- **fingerprint** — what the site actually runs, from independent signal classes. One
+  signal is a coincidence, so it takes two.
+- **scope** — the questions with business consequences. Excluded URLs get `410` or a
+  redirect; a bare 404 strands indexed URLs.
+- **capture** — Playwright renders each page. The DOM is snapshotted **before** the scroll
+  pass, so entrance animations replay instead of shipping already-played; the scroll pass
+  runs afterwards purely to discover what lazy-loading resolved to.
+- **componentize** — splits at the section boundaries the page already has, then nests a
+  dominant wrapper into parent and child components. It never adds, removes or reorders a
+  node — that rule is what keeps CSS sibling selectors and `:nth-child` counts valid.
+- **emit** — real JSX, gated by the round-trip parity check above.
 
-| | elementor.com | kinsta.com |
-|---|---|---|
-| Page builder | Elementor | Gutenberg |
-| Pages migrated | 12 | 11 |
-| Static pages exported | 17 | 16 |
-| Media re-hosted | 79 | 104 |
-| **Acceptance checks** | **6/6 pass** | **6/6 pass** |
+Deeper notes: [`CLAUDE.md`](CLAUDE.md) (codebase map and the invariants),
+[`docs/decisions.md`](docs/decisions.md) (22 ADRs, including the ones that were reversed
+and why).
 
-Capability detection was separately verified against `woocommerce.com` — WooCommerce
-found at confidence 1.0 from five independent signal classes, 95 products, cart URLs
-excluded with a 410 policy — and `wordpress.org` (794 URLs, 121 locales).
+---
 
-### The checks that actually run
+## Layout
 
 ```
-underpin verify https://elementor.com
-
-OK  Every planned URL exists in the export         12/12 routes exported
-OK  No asset still loads from the WordPress origin every asset is served by the migrated site
-OK  Every page has a non-empty title               14 pages checked
-OK  Canonical links carried across                 12/14 pages carry a canonical
-OK  sitemap.xml and robots.txt generated           both present
-OK  No wp-admin / wp-login / xmlrpc references     clean
+packages/
+  importer/     the pipeline and the CLI          (plain ESM, no build step)
+  studio/       the web UI                        (node:http + vanilla JS, zero deps)
+  templates/    the 15-component library for template mode
+  schema/       Zod schemas
+  vocabulary/   the section vocabulary — the seam every layer imports
+docs/           architecture notes and the ADR log
+sites/<host>/   generated per-site output
 ```
-
-### Reusability, tested rather than claimed
-
-`underpin reuse` prints which templates absorbed pages from more than one site. Three of
-eight currently qualify; the rest are honestly marked "one site only" because the two
-demo sites have different page-type mixes. A template that only ever fits the site it was
-written against is not evidence of reuse, and the tool says so.
-
-## Design in one page
-
-**Rendered HTML is the trunk; REST is an accelerator.** Elementor (32.67% of WP sites)
-stores layout as JSON in postmeta, outside the REST field whitelist. With WPBakery and
-Divi, roughly half the fleet defeats a REST-first importer.
-
-**Scope is negotiated, not assumed.** A plumbing company with a 40-page service site and
-a 12-product shop should migrate the 40 pages and make a *decision* about the 12.
-Refusing the whole site to avoid the hard part is a tool failing its user. Every
-excluded URL still gets a routing policy — a bare 404 strands indexed URLs.
-
-**One vocabulary, three consumers.** `sections.vocabulary.json` defines 15 section
-archetypes. Extract, classify, match and render all import it, with types generated from
-it, so drift is a build error rather than silent data loss.
-
-**Two fidelity scores, never blended.** "Closely matches the original design" and
-"templates reusable across multiple websites" are structurally opposed — a template that
-matches every source pixel-for-pixel has been copied, not reused. Content Fidelity and
-Design Fidelity answer different questions; averaging them hides the failure a reviewer
-needs to see.
-
-## Not built, deliberately
-
-| | Why |
-|---|---|
-| ~~Admin dashboard~~ | **Built** — see `packages/studio`. Originally scoped out in favour of a CLI; reversed on request. Six-step wizard covering the whole pipeline. |
-| Headless commerce | A 6–12 week engagement. Named as unavailable in the scope prompt so nobody discovers it at review. |
-| Rebuilt authentication | Gated content stays on WordPress and is proxied. |
-| Companion WP MU-plugin | The right production path, but it needs write access to production installs and reads as the coupling the brief wants removed. Argued in [decisions.md](docs/decisions.md), not built. |
-| Embedding classification stage | No labelled training set at day zero. Folds into the model call. |
-
-## Docs
-
-- [Architecture decisions](docs/decisions.md) — 14 ADRs plus what was cut and why
-- [Discovery probe evidence](docs/discovery-probe-evidence.md) — measured, not assumed
-- [Scope negotiation](docs/scope-negotiation.md)
-- [Model layer](docs/model-layer.md) — running with no key
-- [Elementor page trace](docs/trace-elementor-page.md) — where a real page bleeds
-- [CLAUDE.md](CLAUDE.md) — codebase map

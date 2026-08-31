@@ -180,6 +180,21 @@
         <p>Generates the Next.js project, re-hosts every image, then checks the result mechanically. The checks read the built output — they are not assertions in a README.</p>
       </header>
       <div class="card" style="margin-bottom:16px">
+        <div class="mode-row">
+          <div class="seg" role="group" aria-label="Output mode">
+            <button id="modeFidelity" aria-pressed="true">Exact copy</button>
+            <button id="modeTemplate" aria-pressed="false">Reusable templates</button>
+          </div>
+          <label class="toggle"><input type="checkbox" id="optComponentize" checked> <span>Split each page into named section components</span></label>
+          <label class="toggle"><input type="checkbox" id="optLlm"> <span>Use a model to name them <em id="llmState"></em></span></label>
+        </div>
+        <p class="mode-help" id="modeHelp">
+          Renders every selected page in a real browser and keeps it verbatim — its DOM, its
+          own stylesheets and the scripts that drive its animations, re-hosted locally. Nothing
+          calls WordPress at runtime.
+        </p>
+      </div>
+      <div class="card" style="margin-bottom:16px">
         <div id="buildLabel" style="font-size:.9rem">Ready.</div>
         <div class="bar"><i id="buildBar" style="width:0%"></i></div>
         <div class="log" id="buildLog" style="margin-top:12px"></div>
@@ -189,6 +204,7 @@
         <button class="btn" data-goto="review">Back</button>
         <div class="spacer"></div>
         <button class="btn" id="btnZip" hidden>Download codebase (.zip)</button>
+        <button class="btn" id="btnScore" hidden>Measure against the original</button>
         <button class="btn" id="btnReport" hidden>Open full report</button>
         <button class="btn btn--primary" id="btnPreview" hidden>Preview the migrated site <svg width="15" height="15" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
       </div>
