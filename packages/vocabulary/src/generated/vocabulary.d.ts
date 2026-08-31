@@ -83,7 +83,7 @@ export type Section = {
   };
 }[ArchetypeId];
 
-/** The seven computed properties we keep. Deliberately small — see docs/decisions.md #13. */
+/** The seven computed properties we keep. Deliberately small. */
 export interface SectionStyle {
   bgColor: string | null;
   bgImage: string | null;
