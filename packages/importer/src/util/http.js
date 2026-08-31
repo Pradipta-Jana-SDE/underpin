@@ -23,7 +23,7 @@ const cache = new Map();
 /**
  * Fetch with politeness, retry and backoff. Returns { ok, status, url, headers, text }.
  * Never throws on HTTP status — callers branch on `status`, because a 401 or 404 is
- * information (see docs/discovery-probe-evidence.md) rather than a failure.
+ * information rather than a failure.
  */
 export async function get(url, { retries = 2, timeoutMs = 20000, accept = 'text/html,*/*' } = {}) {
   if (cache.has(url)) return cache.get(url);

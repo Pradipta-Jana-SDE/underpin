@@ -241,9 +241,6 @@ discover → fingerprint → scope → [pick pages] → capture → componentize
   node — that rule is what keeps CSS sibling selectors and `:nth-child` counts valid.
 - **emit** — real JSX, gated by the round-trip parity check above.
 
-Deeper notes: [`docs/decisions.md`](docs/decisions.md) — 22 architecture decisions,
-including the ones that were reversed and why.
-
 ---
 
 ## Layout
@@ -255,6 +252,5 @@ packages/
   templates/    the 15-component library for template mode
   schema/       Zod schemas
   vocabulary/   the section vocabulary — the seam every layer imports
-docs/           architecture notes and the ADR log
 sites/<host>/   generated per-site output
 ```

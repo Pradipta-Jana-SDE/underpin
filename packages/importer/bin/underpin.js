@@ -67,7 +67,7 @@ in-scope URL, or a stratified sample of them when --limit is given.
   --out <dir>      Artefact directory            (default: ./sites/<host>)
 
 The pipeline needs no API key. Rules resolve most pages; a model only shrinks the
-review queue. See docs/model-layer.md.
+review queue.
 `;
 
 function siteDir(siteUrl) {

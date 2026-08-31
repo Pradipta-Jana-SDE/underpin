@@ -53,7 +53,7 @@ lines.push('    sourceSelector?: string;');
 lines.push('  };');
 lines.push('}[ArchetypeId];');
 lines.push('');
-lines.push('/** The seven computed properties we keep. Deliberately small — see docs/decisions.md #13. */');
+lines.push('/** The seven computed properties we keep. Deliberately small. */');
 lines.push('export interface SectionStyle {');
 lines.push('  bgColor: string | null;');
 lines.push('  bgImage: string | null;');

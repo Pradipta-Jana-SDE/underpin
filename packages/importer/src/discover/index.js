@@ -11,7 +11,6 @@ const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_' }
  * assumption fails: the WP core default returned 200 on NONE of them, and no single
  * path won on more than two. robots.txt is the only authoritative pointer, and it was
  * absent on one site — so the chain is the minimum that works, not belt-and-braces.
- * See docs/discovery-probe-evidence.md.
  */
 const SITEMAP_FALLBACKS = ['/wp-sitemap.xml', '/sitemap_index.xml', '/sitemap.xml', '/sitemap-index.xml'];
 
