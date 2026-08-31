@@ -11,7 +11,7 @@ Built for WordPress migrations, and it works on any server-rendered site.
 ## Quick start
 
 ```bash
-git clone <this repo>
+git clone https://github.com/Pradipta-Jana-SDE/underpin.git
 cd underpin
 npm install
 npx playwright install chromium     # the capture runs in a real browser
