@@ -126,7 +126,13 @@ Build the export yourself with `cd sites/<host>/site && npm install && npm run b
 
 ## How it is verified
 
-`npm test` — **145 tests, none skipped.**
+`npm test` — **145 tests, 144 passing on a fresh clone.**
+
+The one skip is deliberate and it names itself: a test that re-emits every section of
+every capture on disk. A fresh clone has no captures — they are gitignored, being other
+people's markup — so it stands down until you have run a migration, at which point it
+runs against whatever you captured. Everything else, including the round-trip tests over
+a committed 1,072-node capture, runs from a clean checkout.
 
 Every acceptance check reads the built export rather than asserting something in a README:
 
