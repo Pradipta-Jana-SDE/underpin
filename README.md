@@ -241,9 +241,8 @@ discover → fingerprint → scope → [pick pages] → capture → componentize
   node — that rule is what keeps CSS sibling selectors and `:nth-child` counts valid.
 - **emit** — real JSX, gated by the round-trip parity check above.
 
-Deeper notes: [`CLAUDE.md`](CLAUDE.md) (codebase map and the invariants),
-[`docs/decisions.md`](docs/decisions.md) (22 ADRs, including the ones that were reversed
-and why).
+Deeper notes: [`docs/decisions.md`](docs/decisions.md) — 22 architecture decisions,
+including the ones that were reversed and why.
 
 ---
 

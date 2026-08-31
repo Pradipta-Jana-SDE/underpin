@@ -23,4 +23,5 @@ sites/*
 sites/*/_migration/diffs/
 sites/*/site/package-lock.json
 .underpin/
+CLAUDE.md
 .shots/
