@@ -32,12 +32,10 @@ export function originalUrl(url) {
 }
 
 /**
- * Picks the largest candidate from a srcset.
- *
- * Splitting on every comma is wrong and silently produces garbage URLs: Cloudflare
- * Image Resizing encodes its options in the path as `/cdn-cgi/image/f=auto,w=632/...`,
- * so a naive split shreds the URL and every download 404s. Split only on commas that
- * actually separate candidates — the ones followed by something that starts a URL.
+ * Picks the largest candidate from a srcset. Splitting on every comma silently produces
+ * garbage: Cloudflare Image Resizing encodes options in the path as
+ * `/cdn-cgi/image/f=auto,w=632/...`, so a naive split shreds the URL and every download
+ * 404s. Split only on commas followed by something that starts a URL.
  */
 export function parseSrcset(srcset) {
   if (!srcset) return [];
@@ -62,12 +60,10 @@ function widestFromSrcset(srcset) {
 }
 
 /**
- * Extracts every kind of media, not just <img src>.
- *
- * Tracing a real Elementor page showed icon-box graphics render as icon-font <i> tags
- * or CSS masks — an extractor keyed on img[src] never looks there, and the icons vanish
- * with no error raised because nothing was technically wrong. Lazy-loading is the same
- * failure in a different costume: the real URL sits in data-src, not src.
+ * Extracts every kind of media, not just <img src>. On a real Elementor page, icon-box
+ * graphics render as icon-font <i> tags or CSS masks, so an extractor keyed on img[src]
+ * loses them with no error raised. Lazy-loading is the same failure in another costume —
+ * the real URL sits in data-src.
  */
 export function extractMedia($, $scope, baseUrl) {
   const found = new Map();

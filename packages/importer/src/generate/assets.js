@@ -25,16 +25,13 @@ function extFor(url, kind) {
  */
 
 /**
- * Fetch with backoff on rate limiting.
+ * Fetch with backoff on rate limiting. Mirroring a whole site issues thousands of asset
+ * requests, and at six in flight elementor.com started answering 429 — 851 of 852 failures
+ * on one run, which is 851 missing images. A 429 is the server asking for a pause, not a
+ * missing file.
  *
- * Measured on elementor.com: mirroring a whole site issues thousands of asset requests,
- * and at six in flight the origin starts answering 429 — 851 of 852 failures on one run,
- * which is 851 missing images in the delivered site. A 429 is the server asking for a
- * pause, not a missing file, and treating it as a failure turns a polite request into a
- * visibly broken migration.
- *
- * Retry-After is honoured when the server sends it; otherwise the wait doubles, with a
- * little jitter so parallel workers do not all come back at the same instant.
+ * Retry-After is honoured when sent; otherwise the wait doubles, with jitter so parallel
+ * workers do not all return at the same instant.
  */
 const RETRY_STATUS = new Set([429, 500, 502, 503, 504]);
 

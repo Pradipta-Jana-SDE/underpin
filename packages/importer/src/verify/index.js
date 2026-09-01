@@ -15,22 +15,18 @@ function walk(dir, out = []) {
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Verifies the built output against the acceptance criteria that can be checked
- * mechanically, rather than asserted in a README.
+ * Checks the built output against the acceptance criteria that can be verified
+ * mechanically rather than asserted in a README.
  *
- * The load-bearing one is origin independence: if a single asset still points at the
- * source domain, the migrated site depends on WordPress staying up, and "does not depend
- * on WordPress at runtime" is false no matter what the architecture diagram claims.
+ * The load-bearing one is origin independence: one asset still pointing at the source
+ * domain means the migrated site depends on WordPress staying up.
  */
 
 /**
- * The document with every anchor destination blanked out.
- *
- * Two forms, because Next writes the page twice: once as HTML, and once as the serialized
- * React tree in its flight payload, where the same link is `["$","a",null,{"href":"…"}]`
- * with the quotes backslash-escaped inside a script string. Handling only the HTML form
- * makes the check pass or fail depending on which copy the URL happened to land in, which
- * is not a property of the migration at all.
+ * The document with every anchor destination blanked out. Two forms, because Next writes
+ * the page twice — as HTML, and as the serialized React tree in its flight payload, where
+ * the same link is `["$","a",null,{"href":"…"}]` with escaped quotes. Handling only the
+ * HTML form makes the check depend on which copy the URL landed in.
  */
 function withoutAnchorHrefs(html) {
   return html
@@ -143,16 +139,13 @@ export function verifyBuild({ outDir, siteUrl, routes, generated = null }) {
     detail: hasSitemap ? 'both present' : 'missing'
   });
 
-  // 5. No WordPress runtime endpoints leaked into the output.
-  // wp-json belongs here too: a surviving REST link in <head> is a live reference to the
-  // old install, and grepping only for wp-admin/wp-login/xmlrpc missed it entirely.
+  // 5. No WordPress runtime endpoints leaked into the output. wp-json belongs here too —
+  // a surviving REST link in <head> is a live reference to the old install, and grepping
+  // only for wp-admin/wp-login/xmlrpc missed it.
   //
-  // A link in the page's own body copy is not the same thing. WordPress's default sample
-  // page literally says "go to your dashboard" and links to wp-admin; that is content the
-  // site always had, it loads nothing, and failing the build over it would be reporting
-  // the source site's copy as a migration defect. It is still surfaced, because a link
-  // pointing at the old install is worth a human's attention — just not a build failure.
-  // Same distinction the origin-independence check already draws.
+  // A link in the page's own body copy is different. WordPress's sample page says "go to
+  // your dashboard" and links to wp-admin: content the site always had, loading nothing.
+  // Surfaced for a human, but not a build failure.
   const WP = /wp-admin|wp-login|xmlrpc\.php|\/wp-json\//i;
   const runtimeRefs = [];
   const contentRefs = [];

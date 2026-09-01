@@ -15,13 +15,9 @@ const templatePkgDir = join(dirname(require.resolve('@underpin/templates/manifes
 const write = (p, s) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, s); };
 
 /**
- * JSON escaped to pure ASCII.
- *
- * Captured markup and inline scripts carry emoji, and WordPress's own emoji-settings
- * script contains unpaired surrogates. JSON.stringify emits those verbatim, which is
- * invalid JSON to a strict parser — the bundler then fails at build time with an
- * unreadable "Unexpected token" pointing into a minified chunk. Escaping every non-ASCII
- * code unit sidesteps the whole class of problem.
+ * JSON escaped to pure ASCII. WordPress's own emoji-settings script contains unpaired
+ * surrogates, which JSON.stringify emits verbatim — invalid JSON to a strict parser, and
+ * the bundler then fails with an "Unexpected token" pointing into a minified chunk.
  */
 const asciiJson = (o) =>
   JSON.stringify(o).replace(/[\u007f-\uffff]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
@@ -29,26 +25,19 @@ const contentKey = (path) =>
   (path === '/' ? 'index' : path.replace(/^\/|\/$/g, '').replace(/\//g, '__')).replace(/[^a-z0-9_.-]/gi, '-') || 'index';
 
 /**
- * <link rel> values that describe the WordPress install rather than the site.
- *
- * Every one of these points a client at an editing endpoint that no longer exists, and
- * `api.w.org` in particular advertises the REST API of an install we have just migrated
- * away from.
+ * <link rel> values describing the WordPress install rather than the site. Each points a
+ * client at an editing endpoint that no longer exists; `api.w.org` advertises the REST API
+ * of the install we just migrated off.
  */
 const DENY_REL = /^(EditURI|wlwmanifest|pingback|profile|https:\/\/api\.w\.org\/|alternate-json)$/i;
 
 /**
- * Clears the previous build out of the app directory before writing a new one.
+ * Clears the previous build before writing a new one. Generation writes file by file, so
+ * anything the last run produced and this one does not simply stays: a page dropped from
+ * the selection keeps its JSON and ships in the zip, and switching modes leaves the old
+ * `out/` where `verify` reads it and reports it as current.
  *
- * Generation writes file by file, so anything the last run produced and this one does not
- * simply stays. Two ways that bites: a page dropped from the selection keeps its JSON and
- * ships in the zip, and — worse — switching modes leaves the previous mode's `out/` on
- * disk, where `verify` reads it and cheerfully reports the old export as current. That is
- * the stale-artefact bug this project already fixed once for the report; it applies with
- * more force to the export itself.
- *
- * node_modules survives: the dependencies are the same three every time and reinstalling
- * them on every build would make iterating unbearable.
+ * node_modules survives — the dependencies are the same three every time.
  */
 function resetAppDir(outDir) {
   for (const entry of ['app', 'components', 'content', 'public', '.next', 'out', 'package.json', 'next.config.mjs', 'README.md', 'site.config.json']) {
@@ -60,11 +49,9 @@ function resetAppDir(outDir) {
 const countNodes = (n) => (!n || typeof n === 'string' ? 0 : 1 + (n.c ?? []).reduce((s, c) => s + countNodes(c), 0));
 
 /**
- * Fidelity mode: reproduce the original page exactly, in React, with no WordPress.
- *
- * Where template mode asks "what does this page MEAN", fidelity mode asks "what does
- * this page LOOK like" and keeps the answer verbatim — the rendered DOM, the site's own
- * stylesheets, and the scripts that drive its animations, all re-hosted locally.
+ * Fidelity mode: reproduce the original page exactly, in React, with no WordPress. Template
+ * mode asks what a page means; this asks what it looks like and keeps the answer verbatim —
+ * rendered DOM, the site's own stylesheets, its animation scripts, all re-hosted locally.
  */
 export async function generateFidelitySite({ outDir, siteUrl, plan, urls, limit = null, mediaLimit, componentize = false, virgin = true, layoutHoist = true, llm = null, onProgress }) {
   const origin = new URL(siteUrl).origin;
@@ -223,10 +210,9 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, limit 
       mode: 'fidelity'
     };
     // Final sweep at the string level. Builders park absolute URLs inside JSON-encoded
-    // attributes (Elementor's data-settings) and inline scripts, where a tree walk over
-    // parsed attributes never reaches them — they survive as \\/-escaped strings. Matching
-    // both forms in one pass is the only rewrite that cannot be defeated by a shape
-    // nobody anticipated. Same lesson as template mode's rewriteUrls, one layer deeper.
+    // attributes (Elementor's data-settings) and inline scripts, where a walk over parsed
+    // attributes never reaches them — they survive as \\/-escaped strings. Matching both
+    // forms in one pass is the rewrite no unanticipated shape can defeat.
     const rewriteEscaped = (json) =>
       json.replace(/https?:(?:\\\/\\\/|\/\/)[^"'\s\\)]+/g, (match) => {
         const plain = match.replace(/\\\//g, '/').split('#')[0];
@@ -319,26 +305,15 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, limit 
 }
 
 /**
- * One section, as a thin wrapper around the renderer that already works.
- *
- * Deliberately not generated JSX source. Re-deriving the attribute renaming, boolean
- * props and style parsing a second time as codegen is where this project would quietly
- * become a much larger one — and the existing renderer already measures 99.8% visual on
- * a static page. What the client asked for — small, named, ordered, editable files — is
- * delivered by the composition in Page.jsx and the content JSON beside each section.
- */
-/**
  * Emits every page's section components, and the shared layout when one is warranted.
  *
- * Each section becomes real JSX source a developer can open and edit, with its text and
- * media in a content module beside it. That reverses this project's earlier decision to
- * wrap the runtime renderer instead — a decision that was correct while nothing could
- * prove generated markup matched the capture, and is wrong now that something can.
+ * Each section becomes real JSX a developer can open and edit, with its text and media in a
+ * content module beside it.
  *
- * The gate is per section, and it fails safe: emitted JSX is re-parsed and compared against
- * the tree it came from, and a section that does not round-trip is written as a renderer
- * wrapper instead. So the worst outcome of a codegen bug is a file that is less pleasant to
- * edit — never a page that renders differently from the original.
+ * The gate is per section and fails safe: emitted JSX is re-parsed and compared against the
+ * tree it came from, and a section that does not round-trip is written as a renderer wrapper
+ * instead. The worst outcome of a codegen bug is a file that is less pleasant to edit, never
+ * a page that renders differently.
  */
 function emitComponents(outDir, prepared, { layoutHoist = true, warnings = [] } = {}) {
   const decision = layoutHoist
@@ -364,12 +339,10 @@ function emitComponents(outDir, prepared, { layoutHoist = true, warnings = [] } 
   const sectionsByKey = {};
 
   /**
-   * A parent component: its own wrapper element, with child components inside it.
-   *
-   * The wrapper is emitted with a single marker child, then the marker line is replaced by
-   * the child tags at that indentation. Going through the ordinary emitter rather than
-   * hand-writing a tag means the wrapper's attributes get the same conversion and the same
-   * parity check as everything else — the marker is simply what the check is run against.
+   * A parent component: its own wrapper element with child components inside it. The
+   * wrapper is emitted with a single marker child, then that marker is replaced by the
+   * child tags. Going through the ordinary emitter rather than hand-writing a tag gives the
+   * wrapper's attributes the same conversion and the same parity check as everything else.
    */
   const composeParent = (part, childNames) => {
     const marker = 'UNDERPIN_CHILD_SLOTS';
@@ -484,13 +457,10 @@ ${body.split('\n').map((l) => (l ? '    ' + l : l)).join('\n')}
 }
 
 /**
- * The safety net: a section whose generated JSX did not round-trip.
- *
- * Not the design any more — the design is real source, above. This renders the captured
- * subtree through the runtime walker, which is exactly what every section used to do, so a
- * fallback still produces the correct DOM. It is reported rather than silent, because a
- * build that quietly stops emitting editable components has stopped delivering the thing
- * that was asked for.
+ * Safety net for a section whose generated JSX did not round-trip: render the captured
+ * subtree through the runtime walker, which still produces the correct DOM. Reported rather
+ * than silent — a build that quietly stops emitting editable components has stopped
+ * delivering the thing that was asked for.
  */
 function fallbackSectionComponent(part, key, back = '../../../') {
   return `'use client';
@@ -534,14 +504,10 @@ ${body}
 }
 
 /**
- * Files the generated app needs at runtime, copied in rather than depended on.
- *
- * The alternative was a `file:` dependency back into this monorepo, which made the export
- * installable only from inside the repo that produced it and forced the zip exporter to
- * vendor a package tree just to make the archive work elsewhere. Copying makes "the
- * generated app depends only on next and react" a fact you can check with one grep instead
- * of a claim in a README. They are copied from the packaged source at generation time, so
- * they cannot drift by hand.
+ * Files the generated app needs at runtime, copied in rather than depended on. A `file:`
+ * dependency back into this monorepo made the export installable only from inside the repo
+ * that produced it. Copying makes "depends only on next and react" checkable with one grep,
+ * and copying from the packaged source at generation time means they cannot drift by hand.
  */
 const RUNTIME_FILES = [
   ['src/DomTree.jsx', 'components/runtime/DomTree.jsx'],
@@ -574,10 +540,9 @@ export default {
   // The captured markup is the source site's own; Next's built-in checks have nothing
   // useful to say about it and would only fail the build on someone else's HTML.
   eslint: { ignoreDuringBuilds: true },
-  // This subtree is deliberately imperative: the site's own scripts mutate the DOM React
-  // rendered. StrictMode's double-invoke exists to catch effects that are not idempotent
-  // — ours is not, by design, and double-invoking would initialise all 44 scripts twice
-  // in 'next dev'. Off for fidelity apps only; template mode keeps the default.
+  // Deliberately imperative: the site's own scripts mutate the DOM React rendered.
+  // StrictMode's double-invoke catches non-idempotent effects, and ours is one by design —
+  // it would initialise all 44 scripts twice in 'next dev'. Fidelity apps only.
   reactStrictMode: false
 };
 `);

@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * Measures how close a migrated page is to its original.
+ * Measures how close a migrated page is to its original, at three viewport widths.
  *
- * "Looks the same" is an opinion until it has a number attached. This produces one, at
- * three viewport widths, and reports the parts separately because they fail for different
- * reasons: pixels catch styling and layout, text catches lost content, and node counts
- * catch a subtree that never rendered.
+ * The parts are reported separately because they fail for different reasons: pixels catch
+ * styling and layout, text catches lost content, node counts catch a subtree that never
+ * rendered.
  *
  *   node scripts/fidelity-score.mjs <originUrl> <migratedBase> [path ...]
  *   node scripts/fidelity-score.mjs https://example.com http://localhost:4400/preview/example-fidelity / /about/

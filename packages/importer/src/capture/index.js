@@ -5,17 +5,15 @@ import { detectLibraries, stripAnimationState } from './strip-animation.js';
 /**
  * Full-fidelity capture.
  *
- * Template mode reads a page for its MEANING — sections, slots, archetypes — and
- * rebuilds it from a shared component library. That is what makes one library serve many
- * brands, and it is why a migrated page looks tidier than the original rather than
- * identical to it.
+ * Template mode reads a page for its meaning — sections, slots, archetypes — and rebuilds it
+ * from a shared library, which is what lets one library serve many brands and why the result
+ * looks tidier than the original rather than identical.
  *
- * Fidelity mode does the opposite: it renders the page in a real browser, waits for the
- * JavaScript to finish, and takes the DOM and CSS as they actually are. The result looks
- * like the original because it IS the original's markup and styles — re-hosted, cleaned
- * of WordPress, and re-emitted as a React tree. Nothing is shared between sites.
+ * Fidelity mode does the opposite: render in a real browser, wait for the JavaScript, take
+ * the DOM and CSS as they are. It looks like the original because it is the original's
+ * markup and styles, re-hosted and re-emitted as React. Nothing is shared between sites.
  *
- * The two modes trade against each other and cannot both be maximised. Pick per site.
+ * The two trade against each other. Pick per site.
  */
 
 /** Scripts that must never survive: they call WordPress, or exist only for wp-admin. */
@@ -37,24 +35,20 @@ const DROP_SCRIPT = [
 export const DOC_WRITE = /document\s*\.\s*write(ln)?\s*\(/;
 
 /**
- * Another app's page-level framework runtime. These can never be replayed here.
+ * Another app's page-level framework runtime, which can never be replayed here.
  *
- * A hydration framework boots by adopting the DOM it believes it server-rendered. The
- * migrated page's DOM was rendered by *our* React, so the source's runtime finds markup it
- * did not produce and tears itself apart on it. When the source is itself Next.js — which
- * goranggosolutions.com is — it is worse than that: both apps push into the same
- * `self.__next_f` and `webpackChunk_N_E` globals, so the source's flight payload corrupts
- * OUR hydration stream and the migrated app never mounts at all. Measured symptoms:
- * "createMutableActionQueue is not a function", "Cannot enqueue a chunk", and every piece
- * of interactivity on the page silently dead.
+ * A hydration framework boots by adopting the DOM it believes it server-rendered, so the
+ * source's runtime finds markup our React produced and tears itself apart on it. Worse when
+ * the source is itself Next.js (goranggosolutions.com): both apps push into the same
+ * `self.__next_f` and `webpackChunk_N_E`, so its flight payload corrupts our hydration
+ * stream — "createMutableActionQueue is not a function", and every interaction silently dead.
  *
- * Dropping them is strictly better: the captured DOM is already the framework's finished
- * output, so the page looks right, our own React hydrates cleanly, and CSS-driven
- * behaviour keeps working. What cannot survive is interactivity that lived in the source's
- * own components — so it is counted and reported rather than quietly lost.
+ * Dropping them is strictly better. The captured DOM is already the framework's finished
+ * output, so the page looks right and our React hydrates cleanly. Only interactivity living
+ * in the source's own components is lost, so that is counted and reported.
  *
- * Deliberately narrow. A WordPress site with a React widget on one page is not this: the
- * patterns below match whole-page runtimes and their bootstrap payloads only.
+ * Narrow on purpose: these patterns match whole-page runtimes and their bootstrap payloads,
+ * not a WordPress site with one React widget on it.
  */
 export const FRAMEWORK_SRC = [
   /\/_next\/static\//i,          // Next.js
@@ -132,19 +126,17 @@ const SCROLL_PASS = async () => {
 
 
 /**
- * Opens every menu in the page chrome and marks what appears, in the browser.
+ * Opens every chrome menu and marks what appears, in the browser.
  *
- * A dropdown built by the source site's own JavaScript exists only while that JavaScript
- * runs. Capture the closed page and the panel is simply absent — measured on a real site:
- * hovering "Products" injects ten nodes that our capture never saw, so the migrated menu
- * looks right and does nothing.
+ * A JS-built dropdown exists only while that JS runs, so a closed-page capture misses the
+ * panel entirely — hovering "Products" on one real site injects ten nodes we never saw, and
+ * the migrated menu looks right and does nothing.
  *
- * So: open each menu, mark the nodes that appear, and leave them in the DOM. They ship
- * hidden and are revealed by a small stylesheet on hover and focus. The closed page still
- * renders identically — the panels are `display:none` — and the menu works again without
- * needing the source's framework, which cannot be replayed here anyway.
+ * So open each menu, mark the new nodes and leave them in. They ship `display:none` and are
+ * revealed on hover and focus by a small stylesheet, so the closed page renders identically
+ * and the menu works without the source's framework, which cannot be replayed anyway.
  *
- * Chrome only. A menu is navigation; opening arbitrary page widgets would be guessing.
+ * Chrome only — opening arbitrary page widgets would be guessing.
  */
 const MENU_PROBE = async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -159,14 +151,12 @@ const MENU_PROBE = async () => {
   }
 
   /**
-   * Attributes of one trigger's own subtree, captured immediately before opening it.
+   * One trigger's own subtree, snapshotted immediately before opening it.
    *
-   * Scoped to the trigger rather than the whole chrome, and taken one trigger at a time.
-   * A snapshot of every element up front looks tidier and is wrong: the page's own scripts
-   * keep adding classes for several seconds after load — sticky headers, scrollbar offsets,
-   * responsive state — and restoring a three-second-old snapshot silently strips them.
-   * Measured on a Kadence theme: it took the page 7% shorter at mobile and cost seven
-   * points of visual fidelity, with nothing failing.
+   * Per trigger, not once for the whole chrome. The page's scripts keep adding classes for
+   * seconds after load — sticky headers, scrollbar offsets, responsive state — so restoring
+   * a three-second-old snapshot strips them. On a Kadence theme that took the page 7%
+   * shorter at mobile and cost seven points of fidelity, with nothing failing.
    */
   const snapshotOf = (el) => {
     const m = new Map();
@@ -221,12 +211,9 @@ const MENU_PROBE = async () => {
 };
 
 /**
- * Reveals a captured menu panel on hover and on keyboard focus.
- *
- * Deliberately minimal and last in the cascade: it decides visibility and nothing else, so
- * the panel keeps the source site's own positioning, spacing and colours. `:focus-within`
- * is not a nicety — a menu that only answers to a mouse is unusable by keyboard, and the
- * original's JavaScript was handling that case before we removed it.
+ * Reveals a captured menu panel on hover and keyboard focus. Minimal and last in the
+ * cascade — visibility only, so the panel keeps the source's positioning and colours.
+ * `:focus-within` is not a nicety: the original's JS handled keyboard before we removed it.
  */
 export const MENU_CSS = `
 [data-underpin-panel]{display:none!important}
@@ -278,12 +265,11 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
       });
 
       try {
-        // `networkidle` is the right target and the wrong requirement. Analytics beacons,
-        // chat widgets and long-polling keep a real marketing site's network permanently
-        // busy, so waiting for two idle seconds simply times out — and a page that times
-        // out is a page missing from the migration. Measured on demos.kadencewp.com: the
-        // homepage never reached idle, while `load` fired in under two seconds and the DOM
-        // was complete. So: try for idle, settle for loaded, never drop the page.
+        // `networkidle` is the right target and the wrong requirement: analytics, chat
+        // widgets and long-polling keep a marketing site permanently busy, so it times out
+        // and the page drops out of the migration. On demos.kadencewp.com the homepage
+        // never idled while `load` fired in under two seconds with a complete DOM.
+        // Try for idle, settle for loaded, never drop the page.
         try {
           await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
         } catch {
@@ -295,12 +281,10 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
         const snapshot = () => page.evaluate(
           ({ dropSel, dropAttr }) => {
             const doc = document;
-            // Filter at serialization time rather than removing from the live document.
-            // This function now runs twice against the same page, and the first pass must
-            // not change what the second one sees — but the real reason is subtler:
-            // deleting .swiper-slide-duplicate out from under a running Swiper mutates a
-            // library's own state mid-flight, which is a fine way to break the page we are
-            // trying to copy.
+            // Filter at serialization time, not in the live document. This runs twice
+            // against the same page, so the first pass must not change what the second
+            // sees — and deleting .swiper-slide-duplicate out from under a running Swiper
+            // mutates its state mid-flight, breaking the page we are trying to copy.
             const dropSelector = dropSel.join(',');
             const dropped = (el) => { try { return el.matches(dropSelector); } catch { return false; } };
 
@@ -388,17 +372,15 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
 
         // Two snapshots, one page load.
         //
-        // The DOM that SHIPS is taken before anything is scrolled. That is the whole point:
-        // scrolling fires every reveal animation, and capturing afterwards bakes the
-        // finished state into the markup — AOS's `aos-animate`, GSAP's written-in transforms
-        // and its pin-spacer wrappers all become permanent. Replay those scripts against
-        // that DOM in the migrated app and they initialise on top of their own output, so
-        // the animations never run again. The site looks right and feels dead.
+        // The DOM that ships is taken before anything scrolls. Scrolling fires every reveal
+        // animation, and capturing afterwards bakes the finished state in — AOS's
+        // `aos-animate`, GSAP's inline transforms and pin-spacer wrappers all permanent.
+        // Replayed against that DOM the scripts initialise on top of their own output and
+        // never run again: the site looks right and feels dead.
         //
-        // The page is still driven, but only to find out what lazy-loading resolved to.
-        // Resource URLs are merged back by structural position; nothing else crosses over.
-        // Menus are opened BEFORE the shipping snapshot so their panels are part of the
-        // tree that gets emitted, and after nothing else has touched the page.
+        // The page is still driven, but only to learn what lazy-loading resolved to;
+        // resource URLs merge back by structural position and nothing else crosses over.
+        // Menus open before the shipping snapshot so their panels are in the emitted tree.
         let menuReport = null;
         if (virgin) menuReport = await page.evaluate(MENU_PROBE).catch(() => null);
 
@@ -467,11 +449,10 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
                 : sc
             );
 
-        // Strip the animated state the page was left in — but only for libraries whose
-        // script actually survived the filtering above and will therefore replay. If AOS's
-        // bundle was dropped and we remove `aos-animate` anyway, every reveal element stays
-        // at opacity:0 and the content is invisible. A baked-in finished animation is a
-        // disappointment; a blank section is a broken migration. The gate is the difference.
+        // Strip the animated state, but only for libraries whose script survived the
+        // filtering above and will replay. Remove `aos-animate` after AOS's bundle was
+        // dropped and every reveal stays at opacity:0 — a baked-in animation is a
+        // disappointment, a blank section is a broken migration.
         let stripReport = null;
         if (virgin) {
           const libs = detectLibraries(survivingScripts, captured.sheets);

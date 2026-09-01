@@ -2,12 +2,10 @@
 /**
  * Underpin Studio — a local UI for the migration pipeline.
  *
- * Deliberately dependency-free: node:http plus static files. Adding a server framework
- * to a tool whose whole point is removing runtime dependencies would be a poor look, and
- * there is nothing here that warrants one.
+ * Dependency-free by choice: node:http plus static files. Nothing here warrants a server
+ * framework in a tool whose point is removing runtime dependencies.
  *
- * Long-running stages stream NDJSON so the browser can show real progress instead of a
- * spinner that tells the operator nothing.
+ * Long-running stages stream NDJSON so the browser shows real progress rather than a spinner.
  */
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
@@ -270,19 +268,16 @@ async function handleZip(req, res, url) {
   const dir = join(SITES, host, 'site');
   if (!existsSync(dir)) return json(res, 404, { error: 'Nothing generated for that site yet.' });
 
-  // Source, not build artefacts: node_modules and .next are reproducible from
-  // package.json and would multiply the download by two orders of magnitude.
+  // Source only: node_modules and .next rebuild from package.json and would multiply the
+  // download by two orders of magnitude.
   //
-  // The workspace packages the site depends on are vendored in and every path rewritten,
-  // because inside the monorepo they resolve via `file:../../../packages/...` and in a
-  // zip that path leads nowhere. Vendoring just the template package is not enough — it
-  // depends on @underpin/schema and @underpin/vocabulary in turn, and npm goes to the
-  // registry for anything it cannot find on disk, which 404s.
+  // Workspace packages are vendored in with every path rewritten — inside the monorepo they
+  // resolve via `file:../../../packages/...`, which leads nowhere in a zip. The template
+  // package alone is not enough: it pulls @underpin/schema and @underpin/vocabulary, and npm
+  // goes to the registry for anything missing on disk, which 404s.
   //
-  // Fidelity exports need none of that: they copy the two runtime files they use into
-  // components/runtime/ and depend on nothing but next and react. Whether to vendor is
-  // read from the generated package.json rather than from the build mode, so the zip is
-  // correct for whatever is actually on disk.
+  // Fidelity exports need none of this. Whether to vendor is read from the generated
+  // package.json rather than the build mode, so the zip matches what is actually on disk.
   const WORKSPACE = ['templates', 'schema', 'vocabulary'];
   const vendorName = (n) => `underpin-${n}`;
   const sitePkg = readJson(join(dir, 'package.json'), {});
@@ -422,12 +417,11 @@ async function handleSetTemplate(req, res) {
 /**
  * Stages 7-9: generate, report, verify.
  *
- * Fidelity is the default because it is what the operator asked for by opening this tool:
- * the same site, in React, without WordPress. Template mode is the other product — it
- * trades exactness for a reusable component library — and it stays one click away rather
- * than being the thing you get by accident. For a long time this handler could only run
- * template mode, so the studio quietly shipped the ~50%-match output while the exact path
- * existed behind a CLI flag nobody clicking through a wizard would ever find.
+ * Fidelity is the default — it is what opening this tool asks for: the same site, in React,
+ * without WordPress. Template mode trades exactness for a reusable library and stays one
+ * click away rather than something you get by accident. This handler used to run template
+ * mode only, so the studio shipped the ~50%-match output while the exact path sat behind a
+ * CLI flag nobody clicking through a wizard would find.
  */
 async function handleBuild(req, res) {
   const { siteUrl, mode = 'fidelity', componentize = true, mediaLimit = null, virgin = true, llm = false } = await body(req);
@@ -495,12 +489,9 @@ async function handleBuild(req, res) {
 /**
  * Stage 7b: actually compile the generated project.
  *
- * The studio used to generate a Next.js app and then tell the operator to go and run
- * `npm install && npm run build` themselves — so the Preview step, one click later, had
- * nothing to show and rendered a 404 or, worse, fell through to whatever the previous
- * project had left on disk. Generating something you cannot look at is not a migration
- * tool. This runs the install and the build and streams their output, so Preview means
- * preview.
+ * The studio used to generate the app and leave `npm install && npm run build` to the
+ * operator, so Preview one click later had nothing to serve — a 404, or worse, whatever the
+ * previous project left on disk. This runs both and streams their output.
  */
 async function handleCompile(req, res) {
   const { siteUrl } = await body(req);
@@ -606,18 +597,16 @@ async function handleVerify(req, res) {
 /* ------------------------------------------------------------ static files */
 
 /**
- * Scopes a preview's NAVIGATION to its own project — and deliberately nothing else.
+ * Scopes a preview's navigation to its own project, and nothing else.
  *
- * Clicking a link in the preview must not escape to another project's export, so `<a href>`
- * is rewritten. Asset URLs are left exactly as the build wrote them, and that restraint is
- * load-bearing: React dedupes hoisted stylesheets by href, so rewriting `<link href>` in
- * the served HTML while the client re-inserted the original path from its own payload
- * produced two copies of every sheet — twelve where the build emitted seven — and the
- * changed cascade order cost seven points of visual fidelity at mobile. Measured; the
- * export itself scored 100% the whole time.
+ * `<a href>` is rewritten so a click cannot escape into another project's export. Asset URLs
+ * are left exactly as the build wrote them, and that restraint is load-bearing: React dedupes
+ * hoisted stylesheets by href, so rewriting `<link href>` server-side while the client
+ * re-inserted the original path gave twelve sheets where the build emitted seven, and the
+ * changed cascade order cost seven points at mobile. The export scored 100% throughout.
  *
- * Assets instead resolve by Referer, and by the cookie set below for the ones a stylesheet
- * requests (whose Referer is the stylesheet, not the page).
+ * Assets resolve by Referer instead, and by the cookie set below for the ones a stylesheet
+ * requests — whose Referer is the stylesheet, not the page.
  */
 function scopeToPreview(body, host, type) {
   if (!type.startsWith('text/html')) return body;

@@ -1,27 +1,19 @@
 /**
  * Resource merge across the two capture snapshots.
  *
- * Capture takes the DOM twice in one browser session:
- *
  *   virgin — read before the scroll pass. This is the tree that ships.
- *   driven — read after scrolling the whole page. Never shipped; consulted only for
- *            what lazy-loading resolved to.
+ *   driven — read after scrolling. Never shipped; consulted only for what lazy-loading
+ *            resolved to.
  *
- * The reason for two is that scrolling is the only way to make a lazy loader fetch its
- * real images, and it is also the thing that ruins the DOM for replay: AOS writes
- * `aos-animate`, GSAP writes inline transforms and pin-spacer wrappers, and a tree
- * carrying that output already is a tree the same scripts cannot animate a second time.
- * So the scroll happens, we keep only its useful residue — resolved URLs — and throw the
- * rest away.
+ * Two snapshots because scrolling is the only way to make a lazy loader fetch its real
+ * images, and also the thing that ruins the DOM for replay — AOS writes `aos-animate`,
+ * GSAP writes inline transforms and pin-spacer wrappers, and those scripts cannot animate
+ * a tree that already holds their output. So we scroll, keep the resolved URLs, bin the rest.
  *
- * The one rule this module obeys:
- *
- *   Virgin structure always wins. Only attribute VALUES ever change. No node is added,
- *   removed or reordered, ever, for any reason.
- *
- * Anything the scroll changed structurally is a diagnostic, not an edit. That is what
- * makes the merge safe to run unattended: the worst case is an image that stays a
- * placeholder and shows up in the report, never a shifted :nth-child count.
+ * One rule: virgin structure wins. Only attribute values change — no node is added, removed
+ * or reordered, ever. Structural drift is a diagnostic, not an edit, which is what makes the
+ * merge safe unattended: worst case is a placeholder image in the report, never a shifted
+ * :nth-child count.
  */
 
 /** Attributes that can hold a resolved resource URL, by tag. */

@@ -2,11 +2,9 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Reads a .env file into a plain object, merged UNDER process.env.
- *
- * Under, not over: a value exported in the shell is a deliberate act for this run, and a
- * committed file should never be able to override it. Node's own --env-file would do the
- * job, but it has to be passed on the command line and the npm scripts here are the
+ * Reads .env into a plain object, merged *under* process.env — a value exported in the
+ * shell is deliberate for this run and a committed file must not override it. Node's
+ * --env-file would do, but it needs a command-line flag and the npm scripts are the
  * documented entry point.
  */
 export function loadEnv(dir = process.cwd()) {

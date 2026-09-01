@@ -1,16 +1,10 @@
 /**
- * The HTML → React attribute tables, in plain JS.
+ * HTML → React attribute tables, in plain JS so both consumers can share one copy.
  *
- * Moved verbatim out of DomTree.jsx so that two consumers can share one copy. DomTree.jsx
- * is JSX, which bare `node` cannot load (ERR_UNKNOWN_FILE_EXTENSION), and the importer is
- * plain ESM with no build step — so the codegen in packages/importer/src/generate/jsx-emit.js
- * could not import these tables while they lived there.
- *
- * Retyping them was the alternative and it is the worse one: the runtime renderer and the
- * JSX it generates would drift on one attribute and nothing would fail loudly — the page
- * would just render slightly wrong in one of the two rendering paths.
- *
- * This file is a pure move. No value, order or behaviour changed.
+ * They used to live in DomTree.jsx, which bare `node` cannot load
+ * (ERR_UNKNOWN_FILE_EXTENSION), so generate/jsx-emit.js could not import them. Retyping
+ * them would let the runtime renderer and the generated JSX drift on one attribute with
+ * nothing failing loudly. A pure move — no value or order changed.
  */
 
 export const VOID = new Set(['area','base','br','col','embed','hr','img','input','link','meta','param','source','track','wbr']);

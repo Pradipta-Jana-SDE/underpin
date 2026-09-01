@@ -2,31 +2,23 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /**
- * Measures how close a migrated page is to its original.
+ * Measures how close a migrated page is to its original, at three viewport widths.
  *
- * "Looks the same" is an opinion until it has a number attached. This produces one, at three
- * viewport widths, and reports the parts separately because they fail for different reasons:
- * pixels catch styling and layout, text catches lost content, and node counts catch a subtree
- * that never rendered.
- *
- * Extracted from scripts/fidelity-score.mjs so the verify stage and the CLI measure the same
- * way. Two implementations of "fidelity" that drift apart is how a report ends up disagreeing
- * with the tool that produced it.
+ * The parts are reported separately because they fail for different reasons: pixels catch
+ * styling and layout, text catches lost content, node counts catch a subtree that never
+ * rendered. Shared with the CLI (scripts/fidelity-score.mjs) so verify and the command line
+ * cannot drift into two different definitions of fidelity.
  */
 
 /**
- * Grading thresholds. Tuned against the demo migrations, not guessed — and the same bars
- * report/fidelity.js already grades a page against, kept in one place now so they cannot
- * drift apart.
+ * Grading thresholds, tuned against the demo migrations and shared with report/fidelity.js.
  *
- * The visual bar is not 1.0 and never can be: two renders of the *same* URL in two browser
- * contexts differ by antialiasing, font hinting and subpixel text positioning, so a bar at
- * 100% grades noise. 0.92 sits above that floor and below anything a person notices side by
- * side; under 0.85 something structural has moved, not just shaded.
+ * The visual bar cannot be 1.0: two renders of the same URL differ by antialiasing, font
+ * hinting and subpixel text positioning, so a 100% bar grades noise. 0.92 sits above that
+ * floor and below what anyone notices side by side; under 0.85 something structural moved.
  *
- * Text and node coverage sit higher because their noise floor is lower — words either
- * survived or they did not. The residual few percent are nav labels and cookie banners that
- * render from a different source on the two stacks.
+ * Text and node coverage sit higher — words either survived or they did not. The residual
+ * few percent are nav labels and cookie banners rendering from a different source.
  */
 export const VISUAL_PASS = 0.92;
 export const VISUAL_WARN = 0.85;
@@ -34,9 +26,8 @@ export const TEXT_PASS = 0.95;
 export const NODES_PASS = 0.95;
 
 /**
- * How far below its pass bar a dimension may fall and still be a warning rather than a
- * failure. Derived from the visual bars rather than invented, so there is exactly one tuned
- * band in the file and every dimension is judged on the same slope.
+ * How far below its pass bar a dimension may fall and still warn rather than fail. Derived
+ * from the visual bars, so there is one tuned band and every dimension shares its slope.
  */
 const WARN_BAND = VISUAL_PASS - VISUAL_WARN;
 
@@ -48,12 +39,9 @@ const clean = (s) => (s ?? '').replace(/\s+/g, ' ').trim();
 /* ------------------------------------------------------------------ pure helpers */
 
 /**
- * Share of source words that survive into the migrated page.
- *
- * Words shorter than four characters are dropped: "the", "and" and "of" appear on every page
- * ever written and would float the score for a page that lost all of its real copy. Set
- * membership, not sequence — a paragraph that moved is not a paragraph that was lost, and
- * ordering differences are the reflow this measure is deliberately blind to.
+ * Share of source words surviving into the migrated page. Words under four characters are
+ * dropped — "the" and "and" appear everywhere and would float the score for a page that
+ * lost all its real copy. Set membership, not sequence: a paragraph that moved is not lost.
  */
 export function textCoverage(source, migrated) {
   const words = (s) => new Set(clean(s).toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 3));
@@ -66,14 +54,10 @@ export function textCoverage(source, migrated) {
 }
 
 /**
- * One ordinal grade from the three fidelity scores: 'pass' | 'warn' | 'fail'.
- *
- * The WORST dimension decides. This is a minimum over three independent grades and never a
- * mean, because ADR #7 is load-bearing: Content Fidelity and Design Fidelity answer different
- * questions, and a blended 85 hides the failure a reviewer needs to see. A minimum cannot
- * hide one — any dimension that fails drags the whole grade down with it, which is the point.
- *
- * A dimension that was not measured is skipped rather than guessed at.
+ * One ordinal grade from the three scores: 'pass' | 'warn' | 'fail'. The worst dimension
+ * decides — a minimum, never a mean. ADR #7: content and design fidelity answer different
+ * questions and a blended 85 hides the failure a reviewer needs to see. Unmeasured
+ * dimensions are skipped, not guessed.
  */
 export function gradeScore({ visual, text, nodes } = {}) {
   const rank = { pass: 0, warn: 1, fail: 2 };
@@ -89,20 +73,17 @@ export function gradeScore({ visual, text, nodes } = {}) {
 }
 
 /**
- * The three means across every successful measurement, and nothing else.
- *
- * There is deliberately no fourth key. Adding one combined number here is the exact move
- * ADR #7 forbids, and it is a one-line change away at all times, which is why the shape is
- * asserted in the tests rather than left to good intentions.
+ * The three means across every successful measurement — and no fourth key. A combined
+ * number is the one thing ADR #7 forbids, and it is always one line away, so the shape is
+ * asserted in the tests rather than trusted.
  */
 export function summarize(pages) {
   const all = pages ?? [];
   const ok = all.filter((p) => !p.error);
   const mean = (k) => (ok.length ? ok.reduce((a, p) => a + p[k], 0) / ok.length : null);
-  // `measured` travels with the means, and callers print it. A mean over the pages that
-  // happened to load is not a score for the migration — it is a score for a subset, and
-  // reporting 100% while half the pages failed to render is the exact failure this
-  // project refuses to average away anywhere else.
+  // `measured` travels with the means and callers print it. A mean over the pages that
+  // happened to load scores a subset, not the migration — reporting 100% while half the
+  // pages failed to render is exactly the kind of averaging this project refuses.
   return {
     visual: mean('visual'),
     text: mean('text'),
@@ -116,12 +97,9 @@ export function summarize(pages) {
 /* ------------------------------------------------------------------ measurement */
 
 /**
- * Loads the browser and image stack lazily.
- *
- * playwright is an optionalDependency of @underpin/importer and pngjs/pixelmatch live at the
- * workspace root, so a clean install on a machine that skipped the browser download has none
- * of them. Importing at module scope would take the whole verify stage — and every test that
- * imports this file — down with it.
+ * Loads the browser and image stack lazily. playwright is optional and pngjs/pixelmatch live
+ * at the workspace root, so a machine that skipped the browser download has none of them.
+ * A module-scope import would take the whole verify stage, and its tests, down with it.
  */
 async function loadRenderDeps() {
   const load = async (name, pick) => {
@@ -149,10 +127,9 @@ async function probe(browser, url, width) {
   page.on('response', (r) => { if (r.status() >= 400) failed.push(`${r.status()} ${r.url().slice(0, 80)}`); });
 
   try {
-    // Same lesson capture already learned: a real marketing site never reaches network
-    // idle — analytics and chat widgets keep it busy forever — so waiting for it simply
-    // times out and the page goes unmeasured. Worse, an unmeasured page used to vanish
-    // from the average and leave a confident 100%.
+    // Same lesson capture learned: a real marketing site never reaches network idle —
+    // analytics and chat widgets keep it busy — so waiting times out and the page goes
+    // unmeasured, which used to vanish from the average and leave a confident 100%.
     try {
       await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
     } catch {
@@ -172,10 +149,9 @@ async function probe(browser, url, width) {
         step();
       });
     });
-    // Freeze video and CSS animation on BOTH sides before capture. A hero <video> plays
-    // independently in each browser, so two playbacks never show the same frame — that
-    // alone drags a pixel-perfect migration down to ~65% and says nothing about
-    // migration quality. Pausing at frame 0 makes the comparison mean something.
+    // Freeze video and CSS animation on both sides. A hero <video> plays independently in
+    // each browser, so two playbacks never show the same frame — that alone drags a
+    // pixel-perfect migration to ~65% and says nothing about the migration.
     await page.evaluate(() => {
       for (const v of document.querySelectorAll('video')) {
         try { v.pause(); v.currentTime = 0; } catch { /* not seekable */ }
@@ -188,10 +164,9 @@ async function probe(browser, url, width) {
     });
     await page.waitForTimeout(1400);
 
-    // Wait for the images to actually finish. A hero photo still decoding when the shutter
-    // opens is not a migration defect, but it reads as one: the same page measured 81.7%
-    // on one run and 99.5% on the next, purely on whether a background had painted. A
-    // score that swings 18 points on timing is not a measurement.
+    // Wait for images to finish. A hero photo still decoding when the shutter opens reads
+    // as a defect: the same page measured 81.7% on one run and 99.5% on the next, purely on
+    // whether a background had painted.
     await page
       .waitForFunction(() => [...document.images].every((i) => i.complete), null, { timeout: 8000 })
       .catch(() => { /* a genuinely broken image never completes; it is counted below */ });
@@ -221,11 +196,9 @@ async function probe(browser, url, width) {
 }
 
 /**
- * Pixel delta between two screenshots, cropped to their common rectangle.
- *
- * Cropping rather than scaling: a migrated page one pixel wider than the original is a
- * one-pixel bug, and resampling to compare it would smear that difference across every edge
- * in the image and report a much larger one.
+ * Pixel delta between two screenshots, cropped to their common rectangle. Cropped, not
+ * scaled: a page one pixel wider is a one-pixel bug, and resampling would smear that
+ * across every edge in the image and report a much larger one.
  */
 function pixelDelta({ PNG, pixelmatch }, aBuf, bBuf, outFile) {
   const a = PNG.sync.read(aBuf);
@@ -246,14 +219,13 @@ function pixelDelta({ PNG, pixelmatch }, aBuf, bBuf, outFile) {
 }
 
 /**
- * Scores every path at every width and, when given an outDir, writes _migration/score.json.
+ * Scores every path at every width and, given an outDir, writes _migration/score.json.
  *
- * `loadDeps` is injectable so the pure path stays testable: a machine with no browser must be
- * able to prove that this returns `{ skipped: true }` rather than exploding, and it must be
- * able to prove it without a browser.
+ * `loadDeps` is injectable so a machine with no browser can prove this returns
+ * `{ skipped: true }` rather than exploding — without needing a browser to prove it.
  *
- * Returns `{ pages, overall, diffs }`, or `{ skipped, reason }` when the stack is missing.
- * `pages` holds one row per path AND per width — report/fidelity.js reads it that way.
+ * Returns `{ pages, overall, diffs }`, or `{ skipped, reason }`. `pages` holds one row per
+ * path *and* per width; report/fidelity.js reads it that way.
  */
 export async function scorePages({
   origin,
@@ -268,9 +240,8 @@ export async function scorePages({
   try {
     deps = await loadDeps();
   } catch (err) {
-    // Never throw. A machine without a browser should report "not measured", not take down a
-    // verify stage that ran fine without it — and reporting a zero would be worse still,
-    // because a zero reads as a failed migration rather than an absent measurement.
+    // Never throw. No browser means "not measured", not a dead verify stage — and not a
+    // zero either, which reads as a failed migration rather than an absent measurement.
     return {
       skipped: true,
       reason: err?.missing ? `${err.missing} not installed` : 'playwright not installed',
@@ -336,9 +307,8 @@ export async function scorePages({
     generatedAt: new Date().toISOString(),
     pages: rows,
     overall,
-    // An ordinal label, not a blended score: gradeScore takes the worst dimension, so this
-    // can only ever be as good as the weakest measurement. That is what keeps it clear of
-    // ADR #7, which forbids the mean, not the summary.
+    // An ordinal label, not a blended score. gradeScore takes the worst dimension, so this
+    // is only ever as good as the weakest measurement — ADR #7 forbids the mean, not a summary.
     grade: gradeScore(overall),
     diffs
   };

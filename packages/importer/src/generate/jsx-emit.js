@@ -3,15 +3,13 @@ import { VOID, RENAME, BOOLEAN, styleToObject } from '@underpin/templates/dom-ta
 /**
  * Generates readable JSX source from a captured DOM tree.
  *
- * The runtime walker in DomTree.jsx already renders these trees correctly, but it renders
- * them *from JSON*. Open a generated section and you find a blob, not a component. This
- * module emits the same tree as real JSX text, so the migrated project contains files a
- * developer can edit — which is the thing that was actually bought.
+ * DomTree.jsx already renders these trees correctly, but it renders them from JSON — open a
+ * generated section and you find a blob, not a component. This emits the same tree as real
+ * JSX text, so the migrated project holds files a developer can edit.
  *
- * The tables are imported from the renderer rather than retyped. Every one of them is a
- * behaviour the browser can see, and a second copy that drifts by one entry produces a
- * page that renders correctly through one path and subtly wrong through the other, with
- * nothing failing loudly.
+ * The tables come from the renderer rather than being retyped. Each is a behaviour the
+ * browser can see, and a copy that drifts by one entry renders correctly through one path
+ * and subtly wrong through the other, with nothing failing loudly.
  *
  * ---------------------------------------------------------------------------- emission
  *
@@ -38,27 +36,22 @@ import { VOID, RENAME, BOOLEAN, styleToObject } from '@underpin/templates/dom-ta
  * | anything else                      | {"…"}                                          |
  * | text, hoisted                      | {content.heading}                              |
  *
- * `&` is not in the brief's raw-text whitelist but has to be: JSX decodes HTML entities in
- * text and in quoted attribute values, so a raw `&nbsp;` becomes U+00A0 and `&amp;` becomes
- * `&`. Both change the DOM. Tabs and carriage returns are excluded for the same class of
- * reason — JSX rewrites tabs to spaces inside a text run.
+ * `&` has to be excluded from raw text: JSX decodes HTML entities, so a raw `&nbsp;` becomes
+ * U+00A0 and `&amp;` becomes `&` — both change the DOM. Tabs and carriage returns go for the
+ * same reason, since JSX rewrites tabs to spaces inside a text run.
  *
- * NO JSX COMMENTS ARE EMITTED INSIDE THE MARKUP. Capture drops comment nodes, and a JSX
- * comment produces no DOM node where an HTML comment produces one, so emitting `{/* … *\/}`
- * could only ever misrepresent the source — it preserves nothing and adds a thing to keep
- * in sync. The file-level docblock and the dropped-handler list sit outside the element
- * tree and are free.
+ * No JSX comments are emitted inside the markup. Capture drops comment nodes, and `{/* … *\/}`
+ * produces no DOM node where an HTML comment produces one, so it could only misrepresent the
+ * source. The docblock and the dropped-handler list sit outside the tree and are free.
  */
 
 /* ------------------------------------------------------------------ tables */
 
 /**
- * SVG presentation attributes React spells in camelCase.
- *
- * Separate from RENAME because RENAME is the HTML table and these only ever appear inside
- * an <svg>. Everything already camelCase off the HTML parser — viewBox, preserveAspectRatio,
- * gradientUnits, patternContentUnits — is deliberately absent: it is correct as captured and
- * a rename entry would only be a chance to get it wrong.
+ * SVG presentation attributes React spells in camelCase. Separate from RENAME, which is the
+ * HTML table. Anything already camelCase off the parser — viewBox, preserveAspectRatio,
+ * gradientUnits — is absent on purpose: correct as captured, and an entry here could only
+ * get it wrong.
  */
 const SVG_RENAME = {
   'stroke-width': 'strokeWidth', 'stroke-linecap': 'strokeLinecap',
@@ -78,11 +71,9 @@ const SVG_RENAME = {
 };
 
 /**
- * Namespaced attributes.
- *
- * A colon in a JSX prop name is a syntax error, not a warning — one `xlink:href` in one
- * icon and the whole generated file fails to build. Real WordPress themes ship these by
- * the hundred inside sprite sheets, so this is the trap that matters most in this module.
+ * Namespaced attributes. A colon in a JSX prop name is a syntax error, so one `xlink:href`
+ * in one icon fails the whole generated file — and real themes ship these by the hundred
+ * inside sprite sheets.
  */
 const NS_RENAME = {
   'xlink:href': 'xlinkHref', 'xlink:title': 'xlinkTitle', 'xlink:role': 'xlinkRole',
@@ -288,14 +279,12 @@ const MEDIA_IDENT = {
 /**
  * Assigns a content identifier to every hoisted value, in document order.
  *
- * Names are semantic (`heading`, `imageSrc`) rather than path dumps (`s_3_1_src`), because
- * the content module is the file a non-developer opens. Collisions get numeric suffixes in
- * document order, so the third heading on the page is `heading3` on every run — the whole
- * migration is diffable only if this is stable.
+ * Semantic names (`heading`, `imageSrc`) rather than path dumps (`s_3_1_src`) — the content
+ * module is the file a non-developer opens. Collisions take numeric suffixes in document
+ * order, so the third heading is `heading3` on every run and the migration stays diffable.
  *
- * Which attributes count as media is decided by membership in the hoist map, never by a
- * local copy of MEDIA_ATTRS. There are already two copies of that table (componentize.js
- * and splice.js) and a third would be a drift waiting to happen.
+ * Media attributes are decided by membership in the hoist map, never a local copy of
+ * MEDIA_ATTRS: there are already two copies of that table and a third would drift.
  */
 function bindIdentifiers(tree, base, content) {
   const text = content?.text ?? {};
@@ -337,11 +326,9 @@ function bindIdentifiers(tree, base, content) {
 }
 
 /**
- * The hoist base used for this part.
- *
- * componentizePage hoists with `s.id` as the base, but a caller can hoist with anything.
- * Reading it back off the keys means the two can never disagree; guessing it wrong emits a
- * component with no bindings and no error, which is the worst failure mode available.
+ * The hoist base used for this part. componentizePage uses `s.id`, but a caller can hoist
+ * with anything, so read it back off the keys — guessing wrong emits a component with no
+ * bindings and no error at all.
  */
 function hoistBase(part) {
   const key = Object.keys(part.content?.text ?? {})[0] ?? Object.keys(part.content?.media ?? {})[0];
@@ -382,11 +369,10 @@ export function emitSectionModule(part, { key = '', chrome = false, indent = 2 }
   const { bind, identifiers } = bindIdentifiers(part.tree, base, part.content);
   const warnings = newWarnings();
 
-  // `null` rather than nothing: a section that decomposed to no element still has to be a
-  // component the page can import, or the composition in page.jsx breaks on a missing file.
-  // A section whose entire tree is one text node — a browser-rendered XML feed is the real
-  // case — cannot be emitted as bare markup. A fragment renders no DOM node, so wrapping it
-  // costs nothing and keeps "a component returns markup" true for every section.
+  // `null` rather than nothing: a section that decomposed to no element still has to be
+  // importable, or page.jsx breaks on a missing file. A section whose whole tree is one
+  // text node — a browser-rendered XML feed — cannot be emitted as bare markup, and a
+  // fragment renders no DOM node, so wrapping costs nothing.
   const tree = typeof part.tree === 'string' ? { t: 'underpin-fragment', a: {}, c: [part.tree] } : part.tree;
   const markup = emitJsx(tree, { path: base, bind, indent, depth: 2, warnings }) || '    null';
 
@@ -406,10 +392,9 @@ export function emitSectionModule(part, { key = '', chrome = false, indent = 2 }
     notes.push(' * is a site-wide edit.');
   }
   if (warnings.droppedHandlers) {
-    // Reported here rather than beside the element. JSX children have no line-comment
-    // syntax — `// note` in that position is a text node, which changes the DOM — and a
-    // `{/* … */}` comment is barred by this module's no-comments-in-the-tree rule. One
-    // list at the top is also the form a developer can actually act on.
+    // Reported here, not beside the element: JSX children have no line-comment syntax
+    // (`// note` there is a text node) and block comments are barred by the rule above.
+    // One list at the top is also the form a developer can act on.
     notes.push(' *');
     notes.push(` * ${warnings.droppedHandlers} inline handler${warnings.droppedHandlers === 1 ? '' : 's'} from the source page ${warnings.droppedHandlers === 1 ? 'was' : 'were'} dropped; React cannot take a`);
     notes.push(' * string handler and the original targets do not exist here. Re-add as real props:');
@@ -443,11 +428,10 @@ ${markup}
 /**
  * Re-parses emitted JSX back into a {t,a,c} tree.
  *
- * Why not render it with react-dom/server and diff the HTML? The importer is plain ESM
- * with no build step and neither react nor jsdom installed, so proving the output correct
- * would mean bolting a JSX toolchain onto the tool whose pitch is that it does not need
- * one. The independent backstop is not a second parser at all: it is a Playwright
- * node-count and text-coverage score run against the real built page.
+ * Not react-dom/server: the importer is plain ESM with no build step and neither react nor
+ * jsdom installed, so proving the output correct would mean bolting a JSX toolchain onto
+ * the tool whose whole pitch is not needing one. The independent backstop is the Playwright
+ * node-count and text-coverage score against the real built page.
  *
  * A hand-written forward scanner over exactly the grammar this module emits:
  *
@@ -486,13 +470,10 @@ export function parseEmittedJsx(source, { content = {} } = {}) {
   };
 
   /**
-   * A plain quoted JSX attribute, read verbatim.
-   *
-   * JSX attribute values are NOT JavaScript string literals: a backslash in `pattern="\d"`
-   * is a literal backslash, exactly as in HTML. Reading them through the JS string reader
-   * ate the backslash, so every input carrying a regex `pattern` failed its parity check
-   * and fell back to the runtime renderer — measured on elementor.com, where it was the
-   * only fallback in 1,044 sections. The emitter was right; the reader was wrong.
+   * A plain quoted JSX attribute, read verbatim. JSX attribute values are not JS string
+   * literals — the backslash in `pattern="\d"` is literal, as in HTML. Reading them through
+   * the JS string reader ate it, so every `<input pattern>` failed parity and fell back to
+   * the runtime renderer. On elementor.com that was the only fallback in 1,044 sections.
    */
   const readAttrLiteral = () => {
     const quote = src[i];
@@ -611,11 +592,10 @@ export function parseEmittedJsx(source, { content = {} } = {}) {
   };
 
   /**
-   * JSX text semantics, which are NOT HTML's: tabs become spaces, leading and trailing
-   * whitespace is stripped from every line that touches a newline, whitespace-only lines
-   * vanish, and what remains is joined with single spaces. This is exactly Babel's
-   * cleanJSXElementLiteralChild, and the reason the emitter is so careful about which text
-   * it dares to write raw.
+   * JSX text semantics, which are not HTML's: tabs become spaces, leading and trailing
+   * whitespace goes from any line touching a newline, whitespace-only lines vanish, and the
+   * rest joins with single spaces. Babel's cleanJSXElementLiteralChild — and the reason the
+   * emitter is so careful about what it writes raw.
    */
   const cleanText = (raw) => {
     const lines = raw.split(/\r\n|\n|\r/);
@@ -693,12 +673,10 @@ export function parseEmittedJsx(source, { content = {} } = {}) {
 /* -------------------------------------------------------------------- parity */
 
 /**
- * Reduces an attribute map to the props React would actually see.
- *
- * Both sides of a parity check go through this, because the question is "does React get
- * the same props?", not "are the two strings identical". `class="a"` and `className="a"`
- * are the same page. The order of operations mirrors DomTree.jsx's toProps exactly —
- * style, then the handler drop, then booleans — so the two can only ever agree.
+ * Reduces an attribute map to the props React would actually see. Both sides of a parity
+ * check go through it: the question is whether React gets the same props, not whether the
+ * strings match — `class="a"` and `className="a"` are the same page. Order mirrors
+ * DomTree.jsx's toProps exactly (style, handler drop, booleans) so the two cannot disagree.
  */
 export function normalizeAttrs(attrs = {}) {
   const out = {};
@@ -778,10 +756,9 @@ function diff(expected, actual, path) {
 }
 
 /**
- * The gate: does the emitted source parse back into the tree it came from?
- *
- * Never throws. A scanner failure is a parity failure — the file would not have compiled —
- * and a gate that throws is a gate the caller ends up wrapping in a try/catch of its own.
+ * The gate: does the emitted source parse back into the tree it came from? Never throws —
+ * a scanner failure is a parity failure, and a gate that throws is one the caller wraps in
+ * its own try/catch.
  */
 export function checkParity(expectedTree, jsxSource, contentObject = {}, { path = 's' } = {}) {
   let actual;

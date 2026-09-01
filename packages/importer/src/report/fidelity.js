@@ -6,16 +6,14 @@ import { esc, bar, REPORT_CSS, renderPreviewPage } from './shell.js';
 const read = (p, fallback = null) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : fallback);
 
 /**
- * The report for a fidelity build.
+ * The report for a fidelity build — not the template report with different numbers in it.
  *
- * Deliberately not the template-mode report with different numbers in it. Template mode
- * asks "did every section find a home in a component library" — a question about meaning.
- * Fidelity mode asks "is this the same page" — a question about pixels, nodes and whether
- * the site's own scripts still run. Sharing a table would force one set of columns to lie.
+ * Template mode asks whether every section found a home in a component library, a question
+ * about meaning. Fidelity mode asks whether this is the same page: pixels, nodes, and
+ * whether the site's own scripts still run. One shared table would force a column to lie.
  *
- * Before this existed a fidelity run produced no report at all: the CLI's fidelity branch
- * skipped extraction, and the report stage had nothing to describe. A build with no
- * artefact beside it is a site ripper, not an engineering deliverable.
+ * A fidelity run used to produce no report at all — the CLI's fidelity branch skipped
+ * extraction, so the report stage had nothing to describe.
  */
 
 /** pass / warn / fail for one migrated page, with the reason spelled out. */

@@ -6,11 +6,9 @@
 /**
  * Renders a captured DOM tree as real React elements.
  *
- * Deliberately NOT dangerouslySetInnerHTML. That would make the output an HTML mirror
- * with React painted over it — the thing a reviewer catches in ten seconds with View
- * Source, and a fair criticism. Every node here goes through createElement, so the tree
- * is reconciled, keyed and inspectable in React DevTools like any other component, and
- * individual nodes can be swapped for real components later.
+ * Not dangerouslySetInnerHTML, which would make the output an HTML mirror with React
+ * painted over it. Every node goes through createElement, so the tree is reconciled, keyed
+ * and inspectable in DevTools, and individual nodes can become real components later.
  */
 import React from 'react';
 
@@ -65,21 +63,19 @@ export function DomNode({ node, path = '0' }) {
 }
 
 /**
- * Re-runs the source site's own scripts after mount, in order.
- *
- * This is what keeps sliders, accordions and scroll animations working. It is also the
- * riskiest thing fidelity mode does, so it is explicit rather than incidental: scripts
- * that call WordPress were dropped at capture, and everything remaining is served from
- * this origin.
+ * Re-runs the source site's own scripts after mount, in order — what keeps sliders,
+ * accordions and scroll animations working. Also the riskiest thing fidelity mode does, so
+ * it is explicit: WordPress-calling scripts were dropped at capture and the rest is served
+ * from this origin.
  */
 export function SiteScripts({ scripts = [] }) {
   React.useEffect(() => {
     let cancelled = false;
     const added = [];
 
-    // A migrated page that looks right but ran none of its scripts is the failure mode
-    // nobody notices until a carousel does not move. The counter turns "did the replay
-    // work" from an opinion into something a verifier can read out of the live page.
+    // A page that looks right but ran none of its scripts is the failure nobody notices
+    // until a carousel does not move. The counter lets a verifier read the answer off the
+    // live page instead of guessing.
     const stats = { total: scripts.length, ran: 0, failed: 0 };
     window.__underpin = stats;
 

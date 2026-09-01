@@ -7,19 +7,13 @@ export { spliceContent };
 /**
  * Mechanical decomposition of a captured page into per-section components.
  *
- * Not classification. Nothing here decides what a section *means* — it splits the tree
- * where sections already begin, hoists the editable leaves out, and leaves everything
- * else verbatim. That distinction is what makes it safe: the rendered DOM is unchanged,
- * so CSS sibling selectors, :nth-child counts and scripts that query across sections all
- * still resolve exactly as they did on the source page.
+ * Not classification — nothing here decides what a section means. It splits the tree where
+ * sections already begin, hoists the editable leaves out and leaves the rest verbatim, so
+ * CSS sibling selectors, :nth-child counts and cross-section queries all still resolve.
  *
- * The one rule the whole module obeys:
- *
- *   A split is safe if and only if it never adds a wrapper element, never removes an
- *   element that always rendered, and never reorders siblings.
- *
- * Violating it is how you shift an :nth-child count and break a layout in a way that is
- * invisible in review and obvious to a client.
+ * One rule: a split may never add a wrapper, never remove an element that always rendered,
+ * and never reorder siblings. Break it and you shift an :nth-child count — invisible in
+ * review, obvious to the client.
  */
 
 /** Class fragments marking an element as a component rather than a layout wrapper. */
@@ -50,13 +44,10 @@ const textOf = (n) => {
 };
 
 /**
- * Descends through pure layout wrappers.
- *
- * Scripts inject their own wrappers at runtime — GSAP ScrollTrigger's `pin-spacer-*`
- * divs are all over the real capture and do not exist in server HTML. Each wraps exactly
- * one section, so passing through them finds the real boundaries. Stops at anything that
- * looks like a component, because descending into a carousel discards the very context
- * that identifies it.
+ * Descends through pure layout wrappers. Scripts inject their own at runtime — GSAP
+ * ScrollTrigger's `pin-spacer-*` divs litter a real capture and appear in no server HTML —
+ * and each wraps exactly one section. Stops at anything component-shaped: descending into
+ * a carousel discards the context that identifies it.
  */
 export function unwrapTree(node, maxDepth = 8) {
   let cur = node;
@@ -150,13 +141,12 @@ const MEDIA_ATTRS = { img: ['src', 'srcset', 'alt'], a: ['href'], video: ['src',
 /**
  * Hoists the editable leaves of a section out of its tree.
  *
- * The boundary is a lookup, not a judgment: a value is content when it is the text of a
- * leaf node, or a src/href/poster/srcset/alt on an element that carries one. Everything
- * else — class, id, style, data-*, aria-* and every wrapper — stays in the component
- * verbatim. Deciding by which HTML API the value lives in is what keeps this mechanical;
- * asking "is this aria-label really content" is where classification creeps back in.
+ * The boundary is a lookup, not a judgement: content is leaf text, or src/href/poster/
+ * srcset/alt on an element that carries one. Class, id, style, data-*, aria-* and every
+ * wrapper stay verbatim. Deciding by which HTML API the value lives in keeps this
+ * mechanical — "is this aria-label really content" is where classification creeps back in.
  *
- * Paths use the same addressing DomNode already renders with, so hoisting is reversible.
+ * Paths reuse DomNode's addressing, so hoisting is reversible.
  */
 export function hoistContent(tree, base = 's') {
   const text = {};
@@ -225,33 +215,26 @@ const isFooter = (n) =>
 /**
  * Turns a captured page into an ordered set of section components.
  *
- * Each component is a thin wrapper around the renderer that already works, fed a smaller
- * subtree — deliberately not generated JSX source. Re-deriving the attribute renaming,
- * boolean props and style parsing a second time as codegen is how a 72-hour project
- * becomes a 200-hour one, and the existing renderer already measures 99.8% visual on a
- * static page. The part the client actually asked for — small, ordered, named files they
- * can open and edit — is delivered by the composition in page.jsx and the per-section
- * content JSON.
+ * Each is a thin wrapper around the working renderer fed a smaller subtree, not generated
+ * JSX source: re-deriving attribute renaming, boolean props and style parsing as codegen is
+ * a second full implementation, and the renderer already measures 99.8% visual on a static
+ * page. Small, ordered, editable files come from the composition in page.jsx plus the
+ * per-section content JSON.
  */
 /**
- * How much of a page one section has to hold before it is worth opening up.
- *
- * Block themes wrap the entire site in a single `div.wp-site-blocks`, so a body-level
- * split gives one component holding the header, the content and the footer — technically a
- * decomposition, useless as one. Elementor pages need none of this: their body children
- * already ARE the sections, which is why the descent is conditional rather than always on.
+ * How much of a page one section must hold before it is worth opening up. Block themes wrap
+ * the whole site in one `div.wp-site-blocks`, so a body-level split yields a single
+ * component holding header, content and footer. Elementor needs none of this — its body
+ * children already are the sections — hence the conditional descent.
  */
 const DOMINANT_SHARE = 0.6;
 const MIN_CHILDREN = 2;
 
 /**
- * Splits a dominant section into a parent that renders its own wrapper element and child
- * components inside it.
- *
- * The wrapper is kept and rendered by the parent — descending past it would delete an
- * element that always rendered, which is the one thing decomposition may never do. Every
- * child of the wrapper is accounted for, in order, including whitespace text nodes, so the
- * DOM the browser builds is the same one it built before.
+ * Splits a dominant section into a parent that renders its own wrapper and child components
+ * inside it. The parent keeps the wrapper — descending past it would delete an element that
+ * always rendered. Every child is accounted for in order, whitespace text nodes included,
+ * so the browser builds the same DOM as before.
  */
 function nestSection(node, id, depth, budget, unique) {
   if (depth >= budget || !isEl(node)) return null;
@@ -360,14 +343,13 @@ export function componentizePage(page, { nest = true, maxDepth = 3 } = {}) {
 
   const used = new Map();
   /**
-   * Uniqueness is page-wide, not per level: every component for a page lands in the same
-   * directory, so the same name at two depths overwrites one with the other and leaves
-   * Page.jsx importing a component that renders someone else's markup.
+   * Uniqueness is page-wide, not per level: every component for a page lands in one
+   * directory, so the same name at two depths overwrites the other and leaves Page.jsx
+   * importing someone else's markup.
    *
-   * Two chrome sections on one page — a desktop header and a mobile one, routine in
-   * Elementor and Divi — both name themselves SiteHeader. The second then overwrites the
-   * first on disk AND emits a duplicate import in Page.jsx, which is a hard build failure.
-   * Order-numbered names cannot collide, so this only ever fires on chrome.
+   * Two chrome sections on one page — a desktop and a mobile header, routine in Elementor
+   * and Divi — both name themselves SiteHeader, and the duplicate import is a hard build
+   * failure. Order-numbered names cannot collide, so this only fires on chrome.
    */
   const unique = (name) => {
     const n = (used.get(name) ?? 0) + 1;

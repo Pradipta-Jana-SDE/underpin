@@ -4,21 +4,17 @@ import { createAnthropic } from './anthropic.js';
 /**
  * The optional model layer.
  *
- * Load-bearing invariant, stated once so it is not eroded by a later convenience: the
- * pipeline must run with no API key. Rules already decide everything; a model only ever
- * makes a *cosmetic* call better — what to name a component, and whether a strip of markup
- * is site chrome or content. Neither answer can change the DOM, so the worst a model can
- * do here is pick a duller filename.
+ * The pipeline must run with no API key. Rules already decide everything; a model only
+ * improves a cosmetic call — what to name a component, whether a strip of markup is chrome
+ * or content. Neither can change the DOM, so the worst it can do is pick a duller filename.
  *
- * Everything is therefore fail-open: no key, no package, a timeout, a refusal, a malformed
- * answer — every one of them lands back on the rule that was already there.
+ * Everything fails open: no key, no package, a timeout, a refusal, a malformed answer all
+ * land back on the rule that was already there.
  */
+
 /**
- * Validates a model's naming answer, or rejects the whole thing.
- *
- * Whole, not partly: a name becomes a filename and an import, so a half-applied set is
- * harder to reason about than none at all. Exported so the tests exercise the real rule
- * rather than a copy of it that can drift.
+ * Validates a model's naming answer, or rejects the whole set. Exported so the tests
+ * exercise the real rule rather than a copy that can drift.
  */
 export function validateNames(answer, sections) {
   const rows = answer?.names;
@@ -55,12 +51,9 @@ export function createLlm({ env = loadEnv(), enabled = true } = {}) {
     model,
 
     /**
-     * Names a page's sections.
-     *
-     * Validated hard, because a name becomes a filename and an import: it must be a
-     * PascalCase identifier, there must be exactly one per section, and they must be
-     * unique. Anything else and the whole answer is discarded — a partially-applied set
-     * of names is harder to reason about than none.
+     * Names a page's sections. Validated hard because a name becomes a filename and an
+     * import: PascalCase, one per section, all unique. Anything else discards the whole
+     * answer — a half-applied set of names is harder to reason about than none.
      */
     async nameSections(sections) {
       const result = await client.ask({

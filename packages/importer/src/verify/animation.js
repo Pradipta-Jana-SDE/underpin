@@ -1,12 +1,10 @@
 /**
- * Does the migrated page actually still work?
+ * Does the migrated page still work?
  *
- * Every other acceptance check reads files. Files cannot tell you whether the site's own
- * scripts booted, whether a carousel initialised, or whether the reveal animations ran —
- * and those are exactly what fidelity mode promises. A page can pass all six file checks,
- * score 100% on a frozen screenshot, and be completely inert.
- *
- * So this one loads the built page in a real browser and asks it directly.
+ * Every other acceptance check reads files, and files cannot say whether the site's scripts
+ * booted, whether a carousel initialised, or whether the reveals ran — which is what
+ * fidelity mode promises. A page can pass all six file checks, score 100% on a frozen
+ * screenshot, and be inert. So this loads the built page in a browser and asks it.
  */
 
 /** Beacons that are referrer-locked to the old domain by design. Their 404s are expected. */

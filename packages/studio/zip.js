@@ -3,13 +3,11 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 /**
- * A minimal ZIP writer.
+ * A minimal ZIP writer: local header, deflated data, central directory, end record.
  *
- * Written rather than pulled in because the studio is deliberately dependency-free, and
- * the one library tried here shipped a major version with an incompatible API — a
- * surprise that took the whole server down. The format is simple enough that owning it
- * is cheaper than tracking someone else's breaking changes: local header, deflated data,
- * central directory, end record.
+ * Hand-written because the studio is dependency-free, and the one library tried here shipped
+ * a major version with an incompatible API that took the server down. The format is simple
+ * enough that owning it beats tracking someone else's breaking changes.
  */
 
 const CRC_TABLE = (() => {

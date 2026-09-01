@@ -1,38 +1,23 @@
 /**
  * Undoes what the scroll pass did to the DOM, so the original scripts can replay.
  *
- * An entrance animation is a state machine with exactly two states, and the library owns
- * both: `[data-aos]` starts at `opacity: 0` and AOS adds `aos-animate` to move it to
- * `opacity: 1`. Capture scrolls the page — that is the only way to make lazy images
- * resolve — which drives every one of those machines to its end state and then bakes it
- * into the shipped markup. Re-injecting the same library afterwards initialises it
- * against a DOM that already contains its own output, so nothing ever animates again.
+ * An entrance animation is a two-state machine the library owns: `[data-aos]` starts at
+ * `opacity: 0`, AOS adds `aos-animate` to move it to 1. Capture scrolls the page — the only
+ * way to make lazy images resolve — which drives every machine to its end state and bakes
+ * that into the markup. Re-injecting the library then initialises it against a DOM already
+ * holding its own output, and nothing animates again. Removing the output resets it.
  *
- * Removing that output puts the machine back at state zero. But only if the library is
- * still there to run it.
+ * The gate: capture drops scripts (WordPress endpoints, document.write, over the inline
+ * size cap) and they never come back. Strip `aos-animate` when AOS's bundle was dropped and
+ * its stylesheet still holds every reveal at `opacity: 0` with nothing left to undo it — an
+ * invisible page. Silently missing content is far worse than an animation that plays once at
+ * t=0. So every operation here is gated on a fingerprint of the scripts that survived, and
+ * that asymmetry sets the direction of every judgement call in this file.
  *
- * ---------------------------------------------------------------------------------
- * THE GATE, and why this module is shaped around it
- *
- * Capture drops scripts: anything calling a WordPress endpoint, anything using
- * `document.write`, anything over the inline size cap. Those scripts do not come back.
- *
- * If AOS's bundle was dropped and we strip `aos-animate` anyway, AOS's stylesheet is
- * still on the page, every reveal element is still `opacity: 0`, and nothing will ever
- * set it back. The result is an invisible page — content silently missing, which is a far
- * worse outcome than an animation that plays once at t=0 and then sits still.
- *
- * So every operation below is gated on a fingerprint of the scripts that SURVIVED
- * capture. No surviving script, no strip: the baked-in end state ships, the page looks
- * finished, and the only thing lost is motion. The asymmetry is deliberate and it decides
- * the direction of every judgment call in this file.
- * ---------------------------------------------------------------------------------
- *
- * The second rule, learned from Elementor: never blanket-clear a `style` attribute.
- * Elementor writes real layout inline — `--e-con-grid-template-columns`, background
- * images, per-breakpoint widths — beside its animation state. Only named declarations are
- * ever removed, only from elements the library itself marked, only when the library
- * replays.
+ * Second rule, learned from Elementor: never blanket-clear a `style` attribute. Elementor
+ * writes real layout inline — `--e-con-grid-template-columns`, backgrounds, per-breakpoint
+ * widths — beside its animation state. Only named declarations go, only from elements the
+ * library marked, only when the library replays.
  */
 
 const isEl = (n) => n !== null && typeof n === 'object' && typeof n.t === 'string';
@@ -42,11 +27,9 @@ const hasToken = (n, t) => tokens(n).includes(t);
 /**
  * Fingerprints the surviving script list and stylesheet hrefs.
  *
- * Deliberately matched against the scripts, not the stylesheets: a library's CSS
- * surviving proves only that the pre-animation state (`opacity: 0`, `visibility: hidden`)
- * will still apply, which is precisely the reason stripping without the JS is dangerous.
- * `animateCss` is the exception because animate.css is pure CSS and replays on paint with
- * no JS at all.
+ * Matched on scripts, not stylesheets: surviving CSS only proves the pre-animation state
+ * (`opacity: 0`, `visibility: hidden`) still applies, which is exactly why stripping
+ * without the JS is dangerous. animate.css is the exception — pure CSS, replays on paint.
  *
  * @param {{kind:'external',src:string}|{kind:'inline',code:string}[]} scriptsOrdered
  * @param {(string|{href?:string})[]} sheets
@@ -77,12 +60,9 @@ const GSAP_PIN_DECLS = new Set([
 ]);
 
 /**
- * Splits a style attribute into declarations without breaking on a semicolon that is
- * inside a value.
- *
- * `background-image:url(data:image/svg+xml;base64,…)` is common on Elementor sections,
- * and a naive `split(';')` cuts it in half and destroys the background — the same class
- * of bug as splitting a srcset on commas.
+ * Splits a style attribute into declarations without breaking on a semicolon inside a
+ * value. `background-image:url(data:image/svg+xml;base64,…)` is common on Elementor
+ * sections; a naive `split(';')` halves it — same bug as splitting a srcset on commas.
  */
 function splitDeclarations(style) {
   const out = [];
@@ -201,9 +181,8 @@ export function stripAnimationState(tree, libs = {}) {
       touched = dropDecls(node, (p) => GSAP_PIN_DECLS.has(p)) || touched;
     }
 
-    // Unconditional: an inline `will-change` is a compositor hint a library wrote for the
-    // duration of one tween. Baked in, it pins a layer for the life of the page and costs
-    // memory on every scroll, and nothing needs it to render correctly.
+    // Unconditional: inline `will-change` is a compositor hint written for one tween.
+    // Baked in it pins a layer for the life of the page and nothing needs it to render.
     touched = dropDecls(node, (p) => p === 'will-change') || touched;
 
     return touched;

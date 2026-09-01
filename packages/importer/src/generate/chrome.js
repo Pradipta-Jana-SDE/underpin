@@ -2,48 +2,32 @@ import { createHash } from 'node:crypto';
 import { hoistContent } from './componentize.js';
 
 /**
- * Decides whether a site's header and footer can be hoisted into the shared layout.
+ * Decides whether the header and footer can move into the shared layout.
  *
- * The generator emits SiteHeader.jsx and SiteFooter.jsx into every page's own folder, so a
- * twelve-page migration ships twelve byte-identical copies of the same chrome while
- * app/layout.jsx sits there as a bare shell. Hoisting them once is the obvious win — right
- * up until the header is not actually identical, and the shared copy silently loses the
- * per-page state. That is a bug the client finds on day one, on the first page they open,
- * and it is invisible in a diff of the generated files because the files all look right.
+ * Hoisting saves a byte-identical copy per page, but chrome that is only nearly identical
+ * loses its per-page state when shared, and the generated files all still look right in a
+ * diff. So we hoist on proof only, and a refusal names the rule and the pages involved.
  *
- * So this module never guesses. It hoists only when the chrome is provably the same across
- * every page in the build, and when it refuses it names the rule that refused and where,
- * because "we kept it per-page" is not something a reviewer can act on.
- *
- * Nothing here mutates anything. It answers a question; the caller decides what to emit.
+ * Read-only: this answers a question, the caller decides what to emit.
  */
 
 /* ---------------------------------------------------------------------- hashing */
 
 const isEl = (n) => n && typeof n === 'object' && typeof n.t === 'string';
 
-/**
- * A child that occupies a position in the rendered DOM. Whitespace between tags does not.
- *
- * The same predicate splitSections and hoistContent already use, so all three agree on what
- * counts as a child. Counting inter-tag whitespace would make two captures of one header
- * hash differently for a difference nobody can see.
- */
+/** Whitespace between tags is not a child. Same predicate as splitSections and hoistContent. */
 const isRealChild = (c) => isEl(c) || (typeof c === 'string' && c.trim());
 
 const sha1 = (s) => createHash('sha1').update(s).digest('hex').slice(0, 16);
 
-/** Every text node hashes the same: its position is structure, its wording is content. */
+/** All text hashes alike — position is structure, wording is content. */
 const TEXT_MARK = '#t';
 
 /**
- * Class tokens carrying a digit are dropped.
- *
- * Builders number their elements per page: Elementor's `elementor-element-7a3f1` is a
- * different string in every export of the same header, and comparing them raw would refuse
- * every hoist on every Elementor site. This is deliberately the same predicate `signature()`
- * uses in componentize.js:82-83 — if the two ever disagree, a header that coalescing treats
- * as one shape would hash here as two, and the refusals would be unexplainable.
+ * Drop class tokens containing a digit. Builders number elements per page — Elementor's
+ * `elementor-element-7a3f1` differs in every export of the same header — so comparing raw
+ * classes refuses every hoist on every Elementor site. Same predicate as `signature()` in
+ * componentize.js; if they drift, one shape hashes as two and the refusals stop making sense.
  */
 const stableClasses = (n) =>
   String(n?.a?.class ?? '')
@@ -53,16 +37,12 @@ const stableClasses = (n) =>
     .sort();
 
 /**
- * Depth-first hash of structure alone.
+ * Depth-first hash of structure: tags, ids, stable classes, attribute names, child shape.
+ * Attribute values stay out (bar class and id) — a differing `src` or a computed inline
+ * height is harmless between two renders of one header, and folding it in refuses everything.
  *
- * Tags, ids, stable class tokens, attribute NAMES and child shape are in. Attribute VALUES
- * are out, except class and id, which are part of the canonical string — a `src` pointing at
- * a different hero image or an inline `style` with a computed height differs harmlessly
- * between two renders of the same header, and folding those in would refuse every hoist for
- * a reason nobody could read off the output.
- *
- * Class tokens are deliberately included, and this is the point: `current-menu-item` on the
- * active nav link is exactly the per-page difference that must PREVENT hoisting.
+ * Classes are in on purpose: `current-menu-item` on the active nav link is exactly the
+ * per-page difference that must prevent a hoist.
  */
 export function structuralHash(node) {
   if (!isEl(node)) return sha1(TEXT_MARK);
@@ -76,29 +56,21 @@ export function structuralHash(node) {
 }
 
 /**
- * The hoisted leaves of a subtree as one flat map.
+ * A subtree's hoisted leaves as one flat map. Text keys end `.<index>` and media keys
+ * `@<attr>`, so merging the two namespaces cannot collide. Addressed from the default `'s'`
+ * base, never the section id — the same header is `sec_01` on one page and `sec_02` on the next.
  *
- * Text keys end in `.<index>` and media keys in `@<attr>`, so the two namespaces cannot
- * collide and merging them loses nothing. Always addressed from the default `'s'` base
- * rather than the section id: the same header is `sec_01` on one page and `sec_02` on
- * another, and comparing the two must not turn that into a difference.
- *
- * The paths come from hoistContent's own indexing, which counts whitespace children that
- * structuralHash ignores. So a header differing only in inter-tag whitespace passes rule 3
- * and then trips rule 5 on every key at once. Conservative in the safe direction — it keeps
- * the per-page copies — and reusing hoistContent verbatim is worth more than the edge case,
- * because a second implementation of "what is content here" is a guaranteed future drift.
+ * Paths come from hoistContent, which counts whitespace children that structuralHash ignores,
+ * so a header differing only in whitespace clears rule 3 and then trips rule 5 on every key.
+ * That errs toward keeping the copies, and one shared definition of "what is content" is
+ * worth more than the edge case.
  */
 function hoistMap(node) {
   const { text, media } = hoistContent(node);
   return { ...text, ...media };
 }
 
-/**
- * Hash of the editable leaves — the words, the src/href/alt values — addressed by the same
- * paths the renderer splices back in. Same structure plus same content hash means the same
- * header, in the only sense that matters to a reader of the page.
- */
+/** Hash of the editable leaves, keyed by the paths the renderer splices back in. */
 export function contentHash(node) {
   const map = hoistMap(node);
   return sha1(
@@ -112,16 +84,13 @@ export function contentHash(node) {
 /* --------------------------------------------------------------------- decision */
 
 /**
- * How much of a section's hoisted content may differ and still count as the same chrome.
- *
- * Tuned against real captures rather than picked: a header whose phone number differs by a
- * space, or whose copyright line renders the page name, is still one header. Five percent of
- * a typical header's ~40 leaves is one or two of them. Anything past that is a genuine
- * per-page difference wearing a disguise, and the safe answer is to keep the copies.
+ * How much hoisted content may differ and still be the same chrome. Tuned on real captures:
+ * 5% of a typical 40-leaf header is one or two leaves — a copyright line naming the page, a
+ * phone number spaced differently. Past that it is a real per-page difference; keep the copies.
  */
 const NEAR_IDENTICAL_KEYS = 0.05;
 
-/** Hoist keys whose value is a destination or an asset, where "close enough" is never enough. */
+/** Destination and asset keys, where "close enough" is never enough. */
 const isLinkKey = (k) => k.endsWith('@href') || k.endsWith('@src');
 
 const pathOf = (page) => page?.path ?? page?.key ?? '(unnamed page)';
@@ -134,15 +103,13 @@ const listPaths = (ps) => {
 };
 
 /**
- * Should the header and the footer move into the shared layout?
+ * `pagesParts` is `[{ key, path, parts }]`, parts being componentizePage() output.
  *
- * `pagesParts` is `[{ key, path, parts }]`, where `parts` is componentizePage() output for
- * that page. Each role is decided independently — a site whose footer is identical
- * everywhere and whose header carries an active-nav class should hoist the footer and keep
- * the header, and collapsing that into one yes/no throws away the half that was free.
+ * Header and footer are decided separately: a site with an identical footer and an
+ * active-nav class in the header should still get the footer for free.
  *
- * Returns `{ header: { hoist, reason, from? }, footer: { ... } }`. The reason is surfaced in
- * the migration report, so it names the rule and the two pages that disagreed.
+ * Returns `{ header: { hoist, reason, from? }, footer: {...} }`. The reason reaches the
+ * migration report, so it names the rule and the two pages that disagreed.
  */
 export function hoistDecision(pagesParts) {
   const pages = Array.isArray(pagesParts) ? pagesParts : [];
@@ -156,12 +123,10 @@ function decide(pages, partName, role) {
   const per = (reason) => ({ hoist: false, reason: `per-page: ${reason}` });
   const edge = role === 'header' ? 'first' : 'last';
 
-  // Rule 1 — the name is the signal, and the only signal.
-  //
-  // componentizePage assigns SiteHeader/SiteFooter only when a section both looks like
-  // chrome AND is small relative to the page, which is the judgment that stops a 4,500-leaf
-  // content wrapper from being called site furniture. Re-deriving it here would mean two
-  // definitions of "chrome" that can drift; matching the name means there is one.
+  // Rule 1 — the component name is the only signal. componentizePage assigns
+  // SiteHeader/SiteFooter only when a section looks like chrome and is small relative to the
+  // page, which is what stops a 4,500-leaf content wrapper being called site furniture.
+  // Re-deriving that here would give us two definitions of chrome, free to drift apart.
   const found = pages
     .map((page) => ({ page, part: (page.parts ?? []).find((p) => p.name === partName) }))
     .filter((f) => f.part);
@@ -170,11 +135,9 @@ function decide(pages, partName, role) {
     return per(`rule 1 (no page has a ${partName} section, so there is no shared ${role} to hoist)`);
   }
 
-  // Rule 2 — it has to be on every page, and on more than one.
-  //
-  // A layout applies to the whole build. Hoisting chrome that only some pages carry would
-  // invent a header on the pages that never had one, which is a worse failure than a
-  // duplicated file: it changes what those pages render.
+  // Rule 2 — on every page, and on more than one. A layout applies to the whole build, so
+  // hoisting partial chrome invents a header on pages that never had one. That changes what
+  // those pages render, which is worse than a duplicated file.
   if (pages.length < 2) {
     return per(`rule 2 (only one page in this build — there is nothing to share a ${role} with)`);
   }
@@ -187,8 +150,8 @@ function decide(pages, partName, role) {
     );
   }
 
-  // Rule 3 — identical structure, class tokens included. This is where an active-nav class
-  // stops the hoist: the markup genuinely is different per page, and one copy cannot be both.
+  // Rule 3 — identical structure, classes included. An active-nav class stops the hoist
+  // here: the markup really does differ per page, and one copy cannot be both.
   const structures = found.map((f) => ({ ...f, hash: structuralHash(f.part.tree) }));
   const refS = structures[0];
   const oddS = structures.find((s) => s.hash !== refS.hash);
@@ -196,11 +159,9 @@ function decide(pages, partName, role) {
     return per(`rule 3 (structure differs between ${pathOf(refS.page)} and ${pathOf(oddS.page)})`);
   }
 
-  // Rule 4 — it must already sit at the edge of the page.
-  //
-  // A layout wraps its children; hoisting a section out of the middle and re-emitting it at
-  // the top moves it in the DOM. That shifts every :nth-child count after it and breaks
-  // sibling selectors, which is exactly the failure componentize.js is built to avoid.
+  // Rule 4 — must already sit at the edge of the page. A layout wraps its children, so
+  // lifting a section out of the middle moves it in the DOM, shifting every :nth-child after
+  // it and breaking sibling selectors — the failure componentize.js exists to avoid.
   for (const f of found) {
     const orders = (f.page.parts ?? []).map((p) => p.order);
     const wanted = role === 'header' ? Math.min(...orders) : Math.max(...orders);
@@ -212,21 +173,19 @@ function decide(pages, partName, role) {
     }
   }
 
-  // Rule 5 — identical content, or near enough that the difference is not a difference.
+  // Rule 5 — identical content, or close enough that the difference is not one.
   const contents = found.map((f) => ({ page: f.page, hash: contentHash(f.part.tree), map: hoistMap(f.part.tree) }));
   const refC = contents[0];
   const oddC = contents.find((c) => c.hash !== refC.hash);
   if (oddC) {
-    // Denominator is the union of keys across pages, not one page's count: a leaf that
-    // exists on one page and not another is itself a difference, and it must not shrink the
-    // total it is measured against.
+    // Union of keys across pages, not one page's count: a leaf present on one page and
+    // missing on another is itself a difference, and must not shrink its own denominator.
     const keys = new Set(contents.flatMap((c) => Object.keys(c.map)));
     const differing = [...keys].filter((k) => contents.some((c) => c.map[k] !== refC.map[k]));
 
-    // Checked before the count, and independently of it. A header whose logo links somewhere
-    // different per page is one key out of forty and would sail through the 5% allowance —
-    // but a shared header sending every page to the same wrong place is precisely the class
-    // of bug this module exists to prevent.
+    // Checked before the count and independently of it. A logo linking somewhere different
+    // per page is one key in forty and would sail through the 5% allowance, but a shared
+    // header sending every page to the same wrong place is the bug this module prevents.
     const links = differing.filter(isLinkKey).sort();
     if (links.length) {
       return per(
@@ -243,9 +202,8 @@ function decide(pages, partName, role) {
     }
   }
 
-  // The homepage is the copy to keep. It is the page most likely to have been captured
-  // cleanly, the one a reviewer opens first, and the one whose wording wins if two pages
-  // differ by a hair under the near-identical rule.
+  // Keep the homepage copy: most likely to have captured cleanly, and the page a reviewer
+  // opens first if two pages differ by a hair under the near-identical rule.
   const source = found.find((f) => f.page.path === '/') ?? found[0];
   return { hoist: true, reason: 'hoisted', from: source.page.key };
 }

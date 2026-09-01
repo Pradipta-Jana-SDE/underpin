@@ -575,11 +575,9 @@ async function compile(log) {
 
 
 /**
- * Design fidelity and content fidelity, side by side and never averaged.
- *
- * Two bars rather than one number, because they answer different questions: a page can
- * carry every word and still look wrong, and a blended figure hides whichever of those
- * actually happened.
+ * Design fidelity and content fidelity, side by side and never averaged. Two bars because
+ * they answer different questions — a page can carry every word and still look wrong, and
+ * a blended figure hides whichever of those happened.
  */
 async function score() {
   const log = $('#buildLog');

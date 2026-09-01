@@ -460,8 +460,7 @@ async function main() {
       if (fidelity) {
         // Fidelity mode needs no IR: it keeps each page as rendered rather than reading
         // it for meaning, so extraction, classification and matching are all skipped.
-        // The report is not skipped — a build with no artefact beside it is a site
-        // ripper rather than an engineering deliverable.
+        // The report still runs — a build with no artefact beside it is not a deliverable.
         await stageBuildFidelity(siteUrl, out, num('media'), num('limit'));
         await stageReport(siteUrl, out);
       } else {

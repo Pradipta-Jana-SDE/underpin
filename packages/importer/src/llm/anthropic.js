@@ -1,12 +1,10 @@
 import * as cache from './cache.js';
 
 /**
- * The Claude call, behind a schema and a timeout.
- *
- * The SDK is an optionalDependency loaded dynamically, exactly like Playwright: the
- * pipeline's first invariant is that it runs with no API key, and that has to include
- * running on a machine where the package was never installed. Every failure path here
- * returns null, and every caller treats null as "use the rule".
+ * The Claude call, behind a schema and a timeout. The SDK is an optionalDependency loaded
+ * dynamically, like Playwright: the pipeline must run with no API key, including on a
+ * machine where the package was never installed. Every failure path returns null, and
+ * every caller reads null as "use the rule".
  */
 const ENDPOINT_TIMEOUT_MS = 20000;
 
@@ -31,8 +29,8 @@ export function createAnthropic({ apiKey, model }) {
           model,
           max_tokens: maxTokens,
           system,
-          // Naming a section is a small, well-specified judgement, not a reasoning problem.
-          // Low effort is the right setting and keeps a 79-page site affordable.
+          // Naming a section is a small, well-specified judgement, not a reasoning
+          // problem. Low effort keeps a 79-page site affordable.
           output_config: { effort: 'low', format: { type: 'json_schema', schema } },
           messages: [{ role: 'user', content: prompt }]
         });
@@ -45,9 +43,8 @@ export function createAnthropic({ apiKey, model }) {
         cache.set(key, { value });
         return value;
       } catch {
-        // A rate limit, a network blip, a schema the model would not satisfy — all the
-        // same answer here. The rules already produce a usable result; the model is only
-        // ever allowed to improve on it.
+        // Rate limit, network blip, a schema the model would not satisfy — same answer
+        // to all of them. The rules already give a usable result; the model only improves it.
         return null;
       }
     }

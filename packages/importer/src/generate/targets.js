@@ -1,18 +1,12 @@
 import { stratifiedSample } from '../extract/index.js';
 
 /**
- * Which pages a build actually renders.
+ * Which pages a build actually renders. One shared function because three callers used to
+ * answer this separately: the CLI and the fidelity generator both read `inScopeUrls`
+ * directly, so a selection made in the studio was ignored and the build rendered everything.
  *
- * One function because three callers used to answer this question separately and two of
- * them got it wrong: the CLI and the fidelity generator both read `inScopeUrls` directly,
- * so a selection made in the studio — the whole point of the page-picker step — was
- * silently ignored and the build rendered everything in scope instead.
- *
- * The precedence rule is the interesting part. A selection is an INSTRUCTION, not a hint:
- * the operator has already looked at the page list and said which ones matter, so
- * sampling on top of that would be second-guessing them. `limit` therefore applies only
- * when nobody has chosen. The studio's own migrate handler already worked this way; this
- * is that rule, shared, so every entry point agrees.
+ * A selection is an instruction, not a hint — the operator has already said which pages
+ * matter, so `limit` applies only when nobody has chosen.
  */
 export function resolveTargets(plan, { urls = null, limit = null } = {}) {
   if (urls?.length) return { urls, source: 'explicit' };
@@ -24,7 +18,7 @@ export function resolveTargets(plan, { urls = null, limit = null } = {}) {
     : { urls: all, source: 'in-scope' };
 }
 
-/** How to describe the target set in a progress line, so the operator can see it took effect. */
+/** Progress-line wording, so the operator can see their selection took effect. */
 export function describeTargets({ urls, source }) {
   const n = urls.length;
   const noun = n === 1 ? 'page' : 'pages';
