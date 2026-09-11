@@ -12,6 +12,7 @@
   },
   "scripts": {
     "studio": "node packages/studio/server.js",
+    "studio:next": "npm run dev -w @underpin/studio-next",
     "migrate": "node packages/importer/bin/underpin.js run",
     "underpin": "node packages/importer/bin/underpin.js",
     "test": "node --test packages/importer/test/*.test.js",
