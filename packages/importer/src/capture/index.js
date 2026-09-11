@@ -66,6 +66,21 @@ export const FRAMEWORK_INLINE = [
   /__sveltekit_/
 ];
 
+/**
+ * Elements below <body> in a captured tree.
+ *
+ * Zero means the browser handed back an empty document — a bot wall, a rate limit, or a
+ * navigation that resolved before anything rendered. Whatever the cause, it is not a page.
+ */
+function countElements(node) {
+  if (!node || typeof node !== 'object' || typeof node.t !== 'string') return 0;
+  let n = 0;
+  for (const c of node.c ?? []) {
+    if (c && typeof c === 'object' && typeof c.t === 'string') n += 1 + countElements(c);
+  }
+  return n;
+}
+
 /** Names the framework a page was built with, for the report. */
 export function detectSourceFramework(scripts = []) {
   const joined = scripts.map((s) => (s.kind === 'external' ? s.src : s.code ?? '')).join('\n');
@@ -270,10 +285,11 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
         // and the page drops out of the migration. On demos.kadencewp.com the homepage
         // never idled while `load` fired in under two seconds with a complete DOM.
         // Try for idle, settle for loaded, never drop the page.
+        let response = null;
         try {
-          await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
+          response = await page.goto(url, { waitUntil: 'networkidle', timeout: 25000 });
         } catch {
-          await page.goto(url, { waitUntil: 'load', timeout: 45000 });
+          response = await page.goto(url, { waitUntil: 'load', timeout: 45000 });
           // Late-arriving markup that idle would have waited for.
           await page.waitForTimeout(2500);
         }
@@ -457,6 +473,31 @@ export async function captureSite(urls, { origin, concurrency = 2, onProgress, v
         if (virgin) {
           const libs = detectLibraries(survivingScripts, captured.sheets);
           stripReport = { ...stripAnimationState(captured.tree, libs), libs };
+        }
+
+        // A navigation is not a capture just because it returned.
+        //
+        // pichiavo.com rate-limited a repeat run, answered 429 with an empty document, and
+        // the empty page was written out as a successful migration — five routes, no
+        // content, no warning anywhere. `fetchPolitely` already treats a 429 as "wait, do
+        // not record a miss"; page capture never looked at its own status at all.
+        //
+        // Failing here puts the page in `failures`, which the report already surfaces,
+        // rather than exporting a blank site that looks like it worked.
+        const status = response?.status?.() ?? null;
+        if (status && status >= 400) {
+          failures.push({
+            url,
+            status,
+            error: status === 429
+              ? 'the origin rate-limited this run (429) — wait a few minutes and re-run'
+              : `the origin answered ${status}`
+          });
+          continue;
+        }
+        if (!countElements(captured.tree)) {
+          failures.push({ url, status, error: 'the page rendered no elements' });
+          continue;
         }
 
         pages.push({

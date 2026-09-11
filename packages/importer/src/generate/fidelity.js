@@ -271,10 +271,32 @@ export async function generateFidelitySite({ outDir, siteUrl, plan, urls, limit 
   const redirects = (plan.excludedUrls ?? []).map((e) => ({
     from: new URL(e.url).pathname, policy: e.policy, reason: e.reason
   }));
+  // The route file's `require(`../../content/pages/${key}.json`)` is a webpack context, and
+  // webpack cannot build one for a directory that does not exist. With every page refused
+  // at capture — a rate-limited origin will do it — nothing ever created these, and the
+  // generated project failed to compile with "Can't resolve '../../content/pages'".
+  // A project that emits must always build; whether it has anything in it is a separate
+  // question, answered by the capture failures in the report.
+  mkdirSync(join(outDir, 'content', 'pages'), { recursive: true });
+  mkdirSync(join(outDir, 'components', 'pages'), { recursive: true });
+
   write(join(outDir, 'content', 'routes.json'), JSON.stringify(routes, null, 2));
   write(join(outDir, 'content', 'redirects.json'), JSON.stringify(redirects, null, 2));
 
-  scaffoldFidelityApp(outDir, { siteUrl, routes, origin, componentize, layout: emitted?.layout ?? null });
+  // A migration that captured nothing is not a project.
+  //
+  // Scaffolding one anyway leaves a directory that looks like a successful build and then
+  // fails `next build` on an empty generateStaticParams — which is Next telling the truth
+  // in the least useful place. There is no site here; the capture failures say why, and
+  // the operator needs to see those rather than a webpack trace.
+  if (routes.length) {
+    scaffoldFidelityApp(outDir, { siteUrl, routes, origin, componentize, layout: emitted?.layout ?? null });
+  } else {
+    onProgress?.({
+      type: 'stage',
+      label: `No page could be captured — skipping generation. ${failures.length} refused by the origin.`
+    });
+  }
 
   // A roll-up the report can read without reopening every page. `unmerged` counts nodes
   // whose structure shifted between the two capture passes — a lazy image inside one of
@@ -536,6 +558,9 @@ function scaffoldFidelityApp(outDir, { siteUrl, routes, origin, componentize = f
 export default {
   output: 'export',
   trailingSlash: true,
+  // This project sits inside the migration tool's own workspace, so Next finds two
+  // lockfiles and warns that it guessed the root. It guessed wrong: the root is here.
+  outputFileTracingRoot: import.meta.dirname,
   images: { unoptimized: true },
   // The captured markup is the source site's own; Next's built-in checks have nothing
   // useful to say about it and would only fail the build on someone else's HTML.
